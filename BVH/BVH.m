@@ -10,7 +10,7 @@ function B = BVH( M , arg2 , varargin )
 %   B = BVH( M , leaf )       SAH leaf bounds: a PAIR [minLeaf maxLeaf]
 %                                (adaptive: n <= minLeaf is always a leaf, the
 %                                SAH may keep up to maxLeaf together when
-%                                splitting does not pay; default [2 16]) or a
+%                                splitting does not pay; default [8 32]) or a
 %                                SCALAR s == [s s] (fixed leaf size; Inf = one
 %                                single leaf = brute force, for references).
 %   B = BVH( M , leaf , VOLUME , ... )
@@ -108,7 +108,9 @@ function B = BVH( M , arg2 , varargin )
   end
 
   %SAH leaf bounds: pair [minLeaf maxLeaf]; scalar s == [s s]; Inf = one leaf
-  sahLeaf = [ 2 , 16 ];
+  sahLeaf = [ 8 , 32 ];   %post-PreTri4 las hojas son baratas: [8 32] gana a
+                          %[2 16] un 14-26% en closest-point (near/mid/far) y
+                          %queda a ~3% del optimo de rayos [16 64]
   if nargin >= 2 && ~isempty( arg2 )
     if numel( arg2 ) == 2, sahLeaf = double( arg2(:) ).';
     else,                  sahLeaf = double( arg2 ) * [ 1 , 1 ];

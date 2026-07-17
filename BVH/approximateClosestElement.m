@@ -94,58 +94,18 @@ function [eID, cp, d, bc, F] = approximateClosestElement( M , P , B , Dmax )
     DmaxEff = Dmax;
   end
 
-  [ eID , cp , d ] = approximateClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
-
-  X   = B.X;
   Tri = double( B.elTri );
 
-  %baricentricas ROBUSTAS de cp en su elemento (mismas formas que bvhClosestElement)
+  %baricentricas REGION-EXACTAS del MEX (igual que bvhClosestElement): aristas
+  %y vertices con ceros exactos, reconstruccion a precision de maquina en
+  %slivers, suma 1 y en [0,1] forzados; devuelve 4 columnas -> se recorta al
+  %ancho de faceta de la malla
   if nargout > 3
-    bc = NaN( nP , size( Tri ,2) );
-    k  = sum( Tri > 0 ,2);
-    ke = zeros( nP ,1);
-    w  = eID > 0;  ke(w) = k( eID(w) );
-
-    w = find( ke == 1 );
-    if ~isempty( w ), bc(w,1) = 1; end
-
-    w = find( ke == 2 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);  Bv = X( Tri(eID(w),2) ,:);
-      ab = Bv - A;
-      t  = sum( ( cp(w,:) - A ).*ab ,2) ./ max( sum( ab.^2 ,2) , realmin );
-      t  = min( max( t ,0) ,1);
-      bc(w,1:2) = [ 1-t , t ];
-    end
-
-    w = find( ke == 3 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);
-      v0 = X( Tri(eID(w),2) ,:) - A;
-      v1 = X( Tri(eID(w),3) ,:) - A;
-      v2 = cp(w,:) - A;
-      n  = cross( v0 , v1 , 2 );
-      nn = max( sum( n.*n ,2) , realmin );
-      g  = sum( n .* cross( v0 , v2 , 2 ) ,2) ./ nn;
-      b  = sum( n .* cross( v2 , v1 , 2 ) ,2) ./ nn;
-      W  = [ 1-b-g , b , g ];
-      W  = max( W , 0 );  W = W ./ sum( W , 2 );
-      bc(w,1:3) = W;
-    end
-
-    w = find( ke == 4 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);  Bv = X( Tri(eID(w),2) ,:);
-      C  = X( Tri(eID(w),3) ,:);  D  = X( Tri(eID(w),4) ,:);
-      d0 = detr( Bv-A , C-A , D-A );
-      d0( d0 == 0 ) = realmin;
-      W  = [ detr( Bv-cp(w,:) , C-cp(w,:) , D-cp(w,:) ) ./ d0 , ...
-             detr( cp(w,:)-A  , C-A       , D-A       ) ./ d0 , ...
-             detr( Bv-A       , cp(w,:)-A , D-A       ) ./ d0 ];
-      W  = [ W , 1 - sum( W ,2) ];
-      W  = max( W , 0 );  W = W ./ sum( W , 2 );
-      bc(w,1:4) = W;
-    end
+    [ eID , cp , d , bc4 ] = approximateClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
+    bc = bc4( : , 1:size( Tri ,2) );
+    bc( eID == 0 , : ) = NaN;
+  else
+    [ eID , cp , d ] = approximateClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
   end
 
   %clasificacion del FEATURE del punto mas cercano (+ flag de borde abierto)
@@ -158,6 +118,7 @@ function [eID, cp, d, bc, F] = approximateClosestElement( M , P , B , Dmax )
     F.type(w) = min( nz(w) , 4 );
     F.onBoundary = false( nP ,1);
 
+    k  = sum( Tri > 0 ,2);                       %nonzero nodes per face
     kk = size( Tri ,2);
     if kk == 3 && all( k == 3 )
       Bed = MeshBoundary( Tri );
@@ -274,9 +235,4 @@ function Ba = buildApprox( M )
   end
 
   Ba.approx = 1;
-end
-
-function v = detr( a , b , c )
-%rowwise determinant det([a;b;c]) = a . (b x c)
-  v = sum( a .* cross( b , c ,2) ,2);
 end

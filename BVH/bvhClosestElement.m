@@ -108,61 +108,17 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
     DmaxEff = Dmax;
   end
 
-  [ eID , cp , d ] = bvhClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
-
-  X   = B.X;
-  Tri = B.Tri;
-
-  %barycentric coordinates of cp within its element -- ROBUST forms (see
-  %vtkClosestElement/calcular_barycentric): triangle weights as ratios of
-  %CROSS-product areas (the Gram form d00*d11-d01^2 cancels catastrophically
-  %on slivers), then clamped to >= 0 and renormalized to sum 1.
+  %barycentrics are REGION-EXACT from the MEX (computed in the region the
+  %search chose, not reverse-engineered from the rounded cp): edge/vertex hits
+  %give exact zeros and slivers stay well-conditioned. The MEX returns 4
+  %columns padded with 0; trim to the mesh's facet width.
   if nargout > 3
-    bc = NaN( nP , size( Tri ,2) );
-    k  = sum( Tri > 0 ,2);
-    ke = zeros( nP ,1);
-    w  = eID > 0;  ke(w) = k( eID(w) );
-
-    w = find( ke == 1 );
-    if ~isempty( w ), bc(w,1) = 1; end
-
-    w = find( ke == 2 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);  Bv = X( Tri(eID(w),2) ,:);
-      ab = Bv - A;
-      t  = sum( ( cp(w,:) - A ).*ab ,2) ./ max( sum( ab.^2 ,2) , realmin );
-      t  = min( max( t ,0) ,1);
-      bc(w,1:2) = [ 1-t , t ];
-    end
-
-    w = find( ke == 3 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);
-      v0 = X( Tri(eID(w),2) ,:) - A;
-      v1 = X( Tri(eID(w),3) ,:) - A;
-      v2 = cp(w,:) - A;
-      n  = cross( v0 , v1 , 2 );
-      nn = max( sum( n.*n ,2) , realmin );
-      g  = sum( n .* cross( v0 , v2 , 2 ) ,2) ./ nn;   %weight of vertex 3
-      b  = sum( n .* cross( v2 , v1 , 2 ) ,2) ./ nn;   %weight of vertex 2
-      W  = [ 1-b-g , b , g ];
-      W  = max( W , 0 );  W = W ./ sum( W , 2 );
-      bc(w,1:3) = W;
-    end
-
-    w = find( ke == 4 );
-    if ~isempty( w )
-      A  = X( Tri(eID(w),1) ,:);  Bv = X( Tri(eID(w),2) ,:);
-      C  = X( Tri(eID(w),3) ,:);  D  = X( Tri(eID(w),4) ,:);
-      d0 = detr( Bv-A , C-A , D-A );
-      d0( d0 == 0 ) = realmin;
-      W  = [ detr( Bv-cp(w,:) , C-cp(w,:) , D-cp(w,:) ) ./ d0 , ...
-             detr( cp(w,:)-A  , C-A       , D-A       ) ./ d0 , ...
-             detr( Bv-A       , cp(w,:)-A , D-A       ) ./ d0 ];
-      W  = [ W , 1 - sum( W ,2) ];
-      W  = max( W , 0 );  W = W ./ sum( W , 2 );
-      bc(w,1:4) = W;
-    end
+    [ eID , cp , d , bc4 ] = bvhClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
+    Tri = B.Tri;
+    bc = bc4( : , 1:size( Tri ,2) );
+    bc( eID == 0 , : ) = NaN;                 %misses: NaN (bc4 miss rows are NaN)
+  else
+    [ eID , cp , d ] = bvhClosestElement_mx( P , B , maxNumCompThreads , DmaxEff );
   end
 
   %classification of the closest-point FEATURE (+ open-boundary flag)
@@ -175,6 +131,7 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
     F.type(w) = min( nz(w) , 4 );                %1 vtx, 2 edge, 3 face, 4 inside
     F.onBoundary = false( nP ,1);
 
+    k  = sum( Tri > 0 ,2);                       %nonzero nodes per face
     kk = size( Tri ,2);
     if kk == 3 && all( k == 3 )                  %pure triangle surface
       Bed = MeshBoundary( Tri );
@@ -220,9 +177,4 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
     d  = d  * fscale;
   end
 
-end
-
-function v = detr( a , b , c )
-%rowwise determinant det([a;b;c]) = a . (b x c)
-  v = sum( a .* cross( b , c ,2) ,2);
 end

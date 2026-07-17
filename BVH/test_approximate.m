@@ -25,11 +25,16 @@ function test_approximate
   hit = abs( da - d0 ) <= 1e-12 + 1e-9*d0;
   assert( mean( hit ) > 0.85 , 'tri: hit rate sospechosamente bajo (%.1f%%)' , 100*mean(hit) );
   assert( all( ea >= 1 ) , 'tri: sin misses sin Dmax' );
-  assert( max( abs( sum( bca ,2) - 1 ) ) < 1e-9 , 'tri: bc no suman 1' );
+  %bc REGION-EXACTAS del MEX (igual que bvhClosestElement): suma 1, en [0,1],
+  %y reconstruyen cp a precision de maquina
+  assert( max( abs( sum( bca ,2) - 1 ) ) < 1e-13 , 'tri: bc no suman 1' );
+  assert( min(bca(:)) >= 0 && max(bca(:)) <= 1 , 'tri: bc fuera de [0,1]' );
+  recA = bca(:,1).*V(M.tri(ea,1),:) + bca(:,2).*V(M.tri(ea,2),:) + bca(:,3).*V(M.tri(ea,3),:);
+  assert( max(max( abs( recA - cpa ) )) < 1e-12 , 'tri: bc no reconstruyen cp' );
   assert( isfield( Fa ,'type') && isfield( Fa ,'onBoundary') && all( Fa.type >= 1 ) , 'tri: F' );
   dcp = sqrt( sum( ( P - cpa ).^2 ,2) );
   assert( max( abs( dcp - da ) ) < 1e-9 , 'tri: |P-cp| debe igualar d' );
-  fprintf( 'triangulos    ok  (cota + hit %.1f%% + bc/F)\n' , 100*mean(hit) );
+  fprintf( 'triangulos    ok  (cota + hit %.1f%% + bc region-exacta/F)\n' , 100*mean(hit) );
 
   %% Dmax escalar y vectorial (corta por la distancia AL VERTICE)
   [ eD , ~ , dD ] = approximateClosestElement( {M,Ba} , P , 0.05 );

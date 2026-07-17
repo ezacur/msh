@@ -252,11 +252,21 @@ tras un `BVH(B,T)` o un refit.
 ```
 
 - `e`: fila de `M.tri` del ganador · `cp`: punto más cercano · `d`: distancia.
-- `bc`: baricéntricas de `cp` en su elemento, **robustas**: calculadas con la
-  forma de productos cruzados (como `vtkClosestElement/calcular_barycentric` —
-  la forma de Gram cancela catastróficamente en *slivers*; ésta es exacta
-  hasta aspecto 1e10), recortadas a `[0,1]` y renormalizadas a suma 1.
-  Testeado con un triángulo de aspecto 1e8.
+- `bc`: baricéntricas de `cp` en su elemento, **region-exactas**: las calcula
+  el MEX en la MISMA región que eligió la búsqueda del punto más cercano
+  (vértice / arista / cara / interior), no por ingeniería inversa sobre el `cp`
+  redondeado. Consecuencia: un cierre sobre una arista o un vértice da los
+  pesos fuera **exactamente cero**, y `bc` reconstruye `cp` a **precisión de
+  máquina en slivers de cualquier aspecto** (verificado hasta aspecto 1e-12:
+  reconstrucción ~1e-15, vs ~1e-5 de la vieja forma cruzada a aspecto 1e-6).
+  El único caso inherentemente sensible es un punto genuinamente *interior* a
+  un triángulo-aguja (su coordenada perpendicular es ill-conditioned por la
+  propia geometría), pero incluso ahí `bc` es fiel a `cp`. Coste: +6% sobre la
+  consulta sin `bc`. **Invariantes forzados** (clamp a ≥0 + renormalización,
+  que preserva los ceros exactos y la reconstrucción): las bc **suman
+  exactamente 1** y están **en [0,1]**, incluso en elementos totalmente
+  degenerados (triángulo/tet/segmento con vértices colapsados por geometría o
+  por id repetido) — verificado a ~1e-15 en todos ellos.
 - `F` (5º output): **clasificación del punto más cercano**:
 
   | `F.type` | significado |
@@ -519,12 +529,20 @@ Monohilo en la máquina de desarrollo (52k tris / 26k tets, 20k queries):
 
 | Query | µs por query |
 |---|---|
-| closest-point, punto **cerca** de la superficie (workload típico) | **0.8** (×5-6 vs `vtkClosestElement`) |
-| closest-point, punto lejano (aabb / rss) | 6.5 / **2.0** (×11-38 vs vtk) |
+| closest-point, punto **cerca** de la superficie (workload típico) | **0.5** (×6-8 vs `vtkClosestElement`) |
+| closest-point, punto lejano (aabb) | ~7 (×11-38 vs vtk; con rss aún menos) |
 | closest-point lejano con `Dmax` | **0.11** |
+| closest-point lejano APROXIMADO (`approximateClosestElement`) | **1.4** (×4.9, 100 % acierto medido) |
 | point-location / closest en **tets** | **2.3–2.6** (×7–60 vs `tsearchn`) |
 | rayo `first` / `any` (blob `[16 64]`) | **0.315 / 0.29** (×1.10 / paridad vs `IntersectSurfaceRay_mx`) |
 | build / refit / plegado de semejanza | 40 ms / 2 ms / **0.014 ms** |
+
+> Re-baseline 2026-07-17: el **default de hoja pasó de `[2 16]` a `[8 32]`**
+> (post-PreTri4 las hojas son baratas y mandan los nodos): closest-point
+> −14 % near / −25 % mid / −26 % far respecto a las cifras históricas de este
+> documento. El test de nodo es ahora 4-wide AVX (aabb/esferas) con prefetch
+> de hijos — eso solo aportó un 1–3 %: la visita de nodo está limitada por
+> memoria, no por ALU (lección medida en `bench_seedCeiling`).
 
 Reglas:
 

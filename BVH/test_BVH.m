@@ -333,8 +333,27 @@ function test_BVH
   [ e , cp , ~ , bc ] = bvhClosestElement( Msl , Psl );
   assert( all(all( isfinite( bc(:,1:3) ) )) && all(all( bc(:,1:3) >= 0 )) && ...
           max( abs( sum( bc(:,1:3) ,2) - 1 ) ) < 1e-12 , 'sliver: invalid bc' );
+  %REGION-EXACT bc (computed in the MEX from the region the search chose):
+  %reconstructs cp to MACHINE precision even on slivers of extreme aspect,
+  %and off-edge / off-vertex weights are EXACTLY zero. This is far tighter
+  %than the old from-cp cross forms (which smeared to ~1e-5 at aspect 1e-6).
   rec = bc(:,1).*Msl.xyz(1,:) + bc(:,2).*Msl.xyz(2,:) + bc(:,3).*Msl.xyz(3,:);
-  assert( max(max( abs( rec - cp ) )) < 1e-7 , 'sliver: bc do not reconstruct cp' );
+  assert( max(max( abs( rec - cp ) )) < 1e-12 , 'sliver: bc do not reconstruct cp' );
+  %general-position needle (rotated, far from origin): a point off the long
+  %edge must give the off-vertex weight as an EXACT zero at any aspect
+  rot = [0.48 -0.62 0.62; 0.87 0.31 -0.38; 0.05 0.72 0.69];  %~orthonormal
+  for asp = [ 1e-4 , 1e-8 , 1e-12 ]
+    Vn = ( [0 0 0;1 0 0;0.5 asp 0] * rot.' ) + [8 -4 12];
+    Mn = struct( 'xyz' , Vn , 'tri' , [1 2 3] );
+    e1 = (Vn(2,:)-Vn(1,:))/norm(Vn(2,:)-Vn(1,:));
+    nn = cross(Vn(2,:)-Vn(1,:),Vn(3,:)-Vn(1,:)); nn=nn/norm(nn);
+    ip = cross(nn,e1);  if dot(ip,Vn(3,:)-Vn(1,:))>0, ip=-ip; end   %away from C
+    Pn = Vn(1,:) + 0.4*(Vn(2,:)-Vn(1,:)) + 0.5*ip + 1e-3*nn;        %closest on edge AB
+    [ ~ , cpn , ~ , bcn ] = bvhClosestElement( Mn , Pn );
+    assert( bcn(3) == 0 , 'sliver: off-edge weight must be exactly 0 (aspect %g)' , asp );
+    assert( norm( bcn(1)*Vn(1,:)+bcn(2)*Vn(2,:)+bcn(3)*Vn(3,:) - cpn ) < 1e-12 , ...
+            'sliver: reconstruction (aspect %g)' , asp );
+  end
 
   %feature classification on a single triangle (open mesh: ALL edges boundary)
   Mtr = struct( 'xyz' , [0 0 0 ; 2 0 0 ; 0 2 0] , 'tri' , [1 2 3] );
@@ -363,6 +382,124 @@ function test_BVH
   assert( isequal( Fw.type , [1;1;1] ) && isequal( Fw.onBoundary , [true;false;true] ) , ...
           'feature: wireframe free ends wrong' );
   fprintf( 'features     ok  (sliver bc; vertex/edge/face/inside; open-boundary flag)\n' );
+
+  %% 7d) DEGENERATE triangles (two vertices collapsed) -- vtkClosestElement is
+  %%     WRONG on these; ours treats the collapsed triangle as its real segment
+  %%     via the d2Tri edge fallback (scalar and AVX-degenerate-lane paths).
+  %%     Both flavours: collapsed GEOMETRY (equal coords, distinct ids) and a
+  %%     REPEATED id. Placed to be the genuine winner; oracle = min over edges.
+  Xd = [ 0 0 0 ; 2 0 0 ; 1 2 0 ; ...        %valid triangle
+         5 0 0 ; 7 0 0 ; 5 0 0 ; ...        %geom-collapsed: verts 4,6 equal
+         0 5 0 ; 3 5 0 ];                    %repeated-id below
+  Td = [ 1 2 3 ; 4 5 6 ; 7 8 8 ];           %seg 4-5, seg 7-8
+  Md = struct( 'xyz' , Xd , 'tri' , Td );
+  Pd = [ 6.0 0.0 1.5 ; 6.0 1.0 0.0 ; 1.5 5.0 2.0 ; 2.0 5.0 0.5 ; 1.0 0.8 1.0 ];
+  dRef = [ 1.5 ; 1.0 ; 2.0 ; 0.5 ; 1.0 ];   %analytic (segment / valid tri)
+  eRef = [ 2 ; 2 ; 3 ; 3 ; 1 ];
+  [ ed , cpd , dd , bcd ] = bvhClosestElement( Md , Pd );
+  assert( max( abs( dd - dRef ) ) < 1e-12 , 'degenerate: distances wrong' );
+  assert( isequal( ed , eRef ) , 'degenerate: wrong winning element' );
+  assert( all( isfinite( cpd(:) ) ) && ...
+          max( abs( sqrt(sum((Pd-cpd).^2,2)) - dd ) ) < 1e-12 , 'degenerate: cp incoherent' );
+  %bc INVARIANTS on the degenerate winners: sum EXACTLY 1, in [0,1], reconstruct
+  assert( max( abs( sum(bcd,2) - 1 ) ) < 1e-14 , 'degenerate: bc must sum to 1' );
+  assert( min(bcd(:)) >= 0 && max(bcd(:)) <= 1 , 'degenerate: bc must lie in [0,1]' );
+  %also as leaves inside a real BVH (force the AVX tri4 path): sphere with 10%
+  %of its triangles collapsed still matches an all-edges oracle
+  rng(4);
+  Vs = randn( 3000 ,3);  Vs = Vs ./ sqrt( sum( Vs.^2 ,2) );
+  Ts = convhulln( Vs );
+  kd = randperm( size(Ts,1) , round(0.1*size(Ts,1)) );
+  Ts( kd ,3) = Ts( kd ,2);                   %collapse (repeated id)
+  Ms = struct( 'xyz' , Vs , 'tri' , Ts );
+  Ps = Vs( randi(3000,4000,1) ,:) .* ( 1 + 0.03*randn(4000,1) );
+  [ ~ , ~ , dS ] = bvhClosestElement( Ms , Ps );
+  dSref = triMeshDist( Vs , Ts , Ps );       %independent: edges + valid-tri interior
+  assert( max( abs( dS - dSref ) ) < 1e-9 , 'degenerate BVH: distances wrong' );
+  fprintf( 'degenerate   ok  (collapsed geometry + repeated id; exact where vtk fails)\n' );
+
+  %% 7e) TINY segments and SLIVER/COLLAPSED tets: must not NaN/crash, distance
+  %%     stays exact vs an independent oracle, and bc reconstructs cp to machine
+  %%     precision (the interior bc VALUE of a near-collapsed element is
+  %%     ill-conditioned by geometry, but cp/d/reconstruction are solid).
+  rot = [0.48 -0.62 0.62; 0.87 0.31 -0.38; 0.05 0.72 0.69];
+  %-- tiny segment (length 1e-8, rotated, far from origin) + a collapsed one
+  for del = [ 1e-4 , 1e-8 , 0 ]
+    Vg = ( [0 0 0 ; del 0 0] * rot.' ) + [8 -4 12];
+    Mg = struct( 'xyz' , Vg , 'tri' , [1 2] );
+    Pg = [ 8.3 -3.7 12.4 ; 8 -4 13 ; 7 -5 11 ];
+    [ eg , cpg , dg , bcg ] = bvhClosestElement( Mg , Pg );
+    assert( all( isfinite( [ dg(:) ; cpg(:) ; bcg(:) ] ) ) , 'tiny seg: NaN' );
+    dref = arrayfun( @(i) segDist( Pg(i,:) , Vg(1,:) , Vg(2,:) ) , (1:3).' );
+    assert( max( abs( dg - dref ) ) < 1e-12 , 'tiny seg: distance wrong' );
+    rec = bcg(:,1).*Vg(1,:) + bcg(:,2).*Vg(2,:);
+    assert( max(max( abs( rec - cpg ) )) < 1e-12 , 'tiny seg: reconstruction' );
+  end
+  %-- sliver tet (near-flat, height eps), tiny tet, and collapsed tet (v2==v4)
+  base = [0 0 0 ; 1 0 0 ; 0.4 0.9 0];
+  cases = { ( [ base ; 0.47 0.3 1e-8 ] * rot.' ) + [8 -4 12] , 'sliver' ; ...
+            ( [0 0 0;1 0 0;0.4 0.9 0;0.4 0.3 0.8]*1e-8 * rot.' ) + [8 -4 12] , 'tiny' ; ...
+            ( [0 0 0;1 0 0;0.4 0.9 0;1 0 0] * rot.' ) + [8 -4 12] , 'collapsed' };
+  for ci = 1:size( cases ,1)
+    Vt = cases{ci,1};  Mt = struct( 'xyz' , Vt , 'tri' , [1 2 3 4] );
+    Pt = [ Vt(1,:) + ( Vt(1,:)-mean(Vt,1) )*3 ;      %clearly outside, pulls a vertex
+           mean(Vt,1) + [0.2 -0.3 0.5] ;
+           Vt(2,:) + [0.4 0.4 0.4] ];
+    [ et , cpt , dt , bct ] = bvhClosestElement( Mt , Pt );
+    assert( all( isfinite( [ dt(:) ; cpt(:) ; bct(:) ] ) ) , 'tet %s: NaN' , cases{ci,2} );
+    dref = arrayfun( @(i) tetFaceDist( Pt(i,:) , Vt ) , (1:3).' );
+    ext  = dt > 1e-9;                                 %exterior points: face oracle exact
+    assert( max( abs( dt(ext) - dref(ext) ) ) < 1e-9 , 'tet %s: distance wrong' , cases{ci,2} );
+    rec = bct(:,1).*Vt(1,:) + bct(:,2).*Vt(2,:) + bct(:,3).*Vt(3,:) + bct(:,4).*Vt(4,:);
+    assert( max(max( abs( rec - cpt ) )) < 1e-11 , 'tet %s: reconstruction' , cases{ci,2} );
+  end
+  fprintf( 'tiny/sliver  ok  (tiny segs + sliver/tiny/collapsed tets: no NaN, exact d, bc reconstruct cp)\n' );
+
+  %% 7f) bc INVARIANTS on strongly degenerate elements (finalizeBC forces them):
+  %%     sum EXACTLY 1, all in [0,1], faithful reconstruction, no NaN.
+  rng(9);
+  degCases = { struct('xyz',[0 0 0;1.3 .2 .1]+7,'tri',[1 2 2])                       , 3 , 'tri repeated-id' ; ...
+               struct('xyz',[0 0 0;1.3 .2 .1;1.3 .2 .1]+7,'tri',[1 2 3])             , 3 , 'tri collapsed geom' ; ...
+               struct('xyz',[7 7 7;7 7 7;7 7 7],'tri',[1 2 3])                       , 3 , 'tri full collapse' ; ...
+               struct('xyz',[7 7 7;7 7 7],'tri',[1 2])                               , 2 , 'seg collapsed' ; ...
+               struct('xyz',[0 0 0;1 0 0;.4 .9 0;1 0 0]+7,'tri',[1 2 3 4])           , 4 , 'tet -> triangle' ; ...
+               struct('xyz',[0 0 0;1 0 0;0 0 0;1 0 0]+7,'tri',[1 2 3 4])             , 4 , 'tet -> edge' ; ...
+               struct('xyz',[0 0 0;1 0 0;.4 .9 0;.7 .5 0]+7,'tri',[1 2 3 4])         , 4 , 'tet coplanar' };
+  for ci = 1:size( degCases ,1)
+    Mg = degCases{ci,1};  kg = degCases{ci,2};
+    Vg = Mg.xyz;  Vg(:,end+1:3) = 0;
+    Pg = mean(Vg,1) + 3*randn( 3000 ,3 );
+    [ eg , cpg , dg , bcg ] = bvhClosestElement( Mg , Pg );
+    o = eg > 0;
+    assert( all( isfinite( [ bcg(:) ; cpg(:) ; dg(:) ] ) ) , '%s: NaN' , degCases{ci,3} );
+    assert( max( abs( sum( bcg(o,:) ,2 ) - 1 ) ) < 1e-13 , '%s: bc sum ~= 1' , degCases{ci,3} );
+    assert( min( bcg(o,:) ,[],'all' ) >= 0 && max( bcg(o,:) ,[],'all' ) <= 1 , ...
+            '%s: bc out of [0,1]' , degCases{ci,3} );
+    rec = zeros( nnz(o) ,3 );  Tk = Mg.tri( eg(o) ,: );  bk = bcg(o,:);
+    for c = 1:kg
+      w = Tk(:,c) > 0;  rec(w,:) = rec(w,:) + bk(w,c).*Vg( Tk(w,c) ,: );
+    end
+    assert( max(max( abs( rec - cpg(o,:) ) )) < 1e-11 , '%s: bc do not reconstruct cp' , degCases{ci,3} );
+  end
+  fprintf( 'degen bc     ok  (collapsed tri/seg/tet: sum=1, in [0,1], reconstruct cp)\n' );
+
+  %% 7g) IDEMPOTENCE: cp = closest(P) lies on the mesh, so closest(cp) must be
+  %%     cp again -- a fixed point, NOT a drifting walk. Iterate the projection
+  %%     and assert the point stays put to machine precision (the winning
+  %%     element id MAY flip on a shared edge/vertex tie, but cp cannot move).
+  rng(7);
+  Vi = randn( 4000 ,3 );  Vi = Vi ./ sqrt( sum( Vi.^2 ,2 ) );
+  Mi = struct( 'xyz' , Vi , 'tri' , convhulln( Vi ) );
+  sci = norm( max(Vi,[],1) - min(Vi,[],1) );
+  [ ~ , cpi ] = bvhClosestElement( Mi , randn(3000,3)*1.2 );   %cp1: on the mesh
+  cp0 = cpi;
+  for it = 1:20
+    [ ~ , cp2 ] = bvhClosestElement( Mi , cpi );
+    assert( max( sqrt(sum((cp2-cpi).^2,2)) ) < 1e-12*sci , 'idempotence: projection moved the point' );
+    cpi = cp2;
+  end
+  assert( max( sqrt(sum((cpi-cp0).^2,2)) ) < 1e-12*sci , 'idempotence: drift accumulated over iterations' );
+  fprintf( 'idempotence  ok  (closest(closest(P)) == closest(P): fixed point, no drift)\n' );
 
   %% 8) timing (all through the MEX; threads follow maxNumCompThreads)
   V = randn( 26000 ,3);  V = V ./ sqrt( sum( V.^2 ,2) );
@@ -459,4 +596,52 @@ function checkMesh( M , P , name , tol )
   assert( max( err ) < 1e-6 , '%s: cp does not reconstruct from barycentric bc' , name );
 
   fprintf( '%-12s ok  (%d points, %d elements)\n' , name , size(P,1) , size(M.tri,1) );
+end
+
+%% independent point-to-triangle-mesh distance oracle: min over the 3 edges of
+%% every triangle PLUS the interior projection where the triangle is valid
+%% (area > 0). Exact for BOTH collapsed triangles (surface IS a segment ->
+%% edges only) and real triangles. Vectorized over points, loop over triangles.
+function d = triMeshDist( X , T , P )
+  X(:,end+1:3) = 0;  nP = size( P ,1);
+  d2 = inf( nP ,1 );
+  for t = 1:size( T ,1)
+    A = X( T(t,1) ,:);  B = X( T(t,2) ,:);  C = X( T(t,3) ,:);
+    q = segD2( P,A,B );
+    q = min( q , segD2( P,B,C ) );
+    q = min( q , segD2( P,C,A ) );
+    n = cross( B-A , C-A );  a2 = n*n.';
+    if a2 > 1e-20                            %valid triangle: try the interior
+      n = n / sqrt( a2 );
+      dist = ( P - A ) * n.';
+      proj = P - dist .* n;
+      v0 = B-A;  v1 = C-A;  v2 = proj - A;
+      d00=v0*v0.'; d01=v0*v1.'; d11=v1*v1.'; d20=v2*v0.'; d21=v2*v1.';
+      den = d00*d11 - d01*d01;
+      vv = ( d11.*d20 - d01.*d21 )/den;
+      ww = ( d00.*d21 - d01.*d20 )/den;
+      inside = vv >= 0 & ww >= 0 & ( vv+ww ) <= 1;
+      q( inside ) = min( q( inside ) , dist( inside ).^2 );
+    end
+    d2 = min( d2 , q );
+  end
+  d = sqrt( d2 );
+end
+
+function q = segD2( P , A , B )
+  AB = B - A;  L2 = AB*AB.';
+  if L2 > 0, s = min(max( ((P-A)*AB.')/L2 ,0),1); else, s = zeros(size(P,1),1); end
+  cp = A + s.*AB;  q = sum( (P-cp).^2 ,2 );
+end
+
+function d = segDist( P , A , B )           %single point-to-segment distance
+  d = sqrt( segD2( P , A , B ) );
+end
+
+function d = tetFaceDist( P , V )           %min distance to the 4 tet faces
+  F = [1 2 3;1 2 4;1 3 4;2 3 4];
+  d = inf;
+  for i = 1:4
+    d = min( d , triMeshDist( V , F(i,:) , P ) );
+  end
 end
