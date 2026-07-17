@@ -294,6 +294,17 @@ cerca = e > 0;                                % o isfinite(d)
 `Dmax` hace *early-exit* real: un punto más lejos que `Dmax` cuesta ~una
 visita de nodo (medido: 0.11 µs/punto, ×65 sobre la búsqueda completa).
 
+`Dmax` también acepta un **vector nP×1**: cota/radio **por punto**, sembrada
+como best-so-far inicial de cada query. Sirve para radios de búsqueda
+heterogéneos o para sembrar cotas superiores de heurísticas (si la cota es
+*alcanzable*, ínflala `(1+1e-9)` para que el elemento que la produce se
+re-encuentre; un miss bajo cota alcanzable significa "el candidato era el
+ganador"). Nota empírica (`bench_vertexSeed`): sembrar la cota del
+vértice-más-cercano / 1-ring **no acelera** este motor — el warm-start y la
+travesía ordenada ya auto-siembran tras el primer descenso, y el coste
+far-field está dominado por la cáscara tangente, que ninguna cota superior
+puede podar.
+
 ### Por tipo de celda
 
 ```matlab
@@ -315,6 +326,33 @@ rápido, y funciona en mallas de tets **deformadas** (no-Delaunay):
 [e, cp, d, bc] = bvhClosestElement({Mtet,Btet}, P);
 tid = e;  tid(d > 0) = NaN;          % == tsearchn(W, Mtet.tri, P)
 ```
+
+### Localizador APROXIMADO: `approximateClosestElement`
+
+Misma firma y convenciones, pero heurístico: vértice más cercano (BVH de
+puntos) + distancia **exacta** a su abanico de elementos (EsuP, fusionado en
+el MEX). Garantías: `d_apx >= d_exacta` **siempre** (cota superior, asertada
+en `bench_approximate`); el elemento es el correcto el ~95–99 % de las veces
+en mallas razonables, con error acotado por la escala local. Todos los
+celltypes; en **nubes de puntos y polilíneas es exacto** en la práctica
+(100 % medido).
+
+```matlab
+Ba = approximateClosestElement( M );                 % blob propio (~= coste del exacto)
+[e,cp,d,bc,F] = approximateClosestElement( {M,Ba} , P [, Dmax] );
+% OJO: Dmax corta por la distancia AL VERTICE (etapa 1), no al elemento
+```
+
+El MEX lleva su propia artillería: hojas de vértices como bloques SoA con
+kernel AVX de 4 puntos (`pt4`), abanicos de triángulos pre-empacados como
+bloques PreTri4 barridos con el kernel 4-wide del motor exacto (`fan4`, solo
+mallas puras de triángulos), hojas grandes `[32 128]` (barrido medido), Morton
++ warm-start + pool fusionado. Cuándo pagar la imprecisión (medido, 1 hilo,
+`bench_approximate`): **far-field ×2.7–6.3** (22→3.6 µs/pt en 200k tris),
+**caja media ×1.1–5.1**, near-surface ×1.3–2.1. Evítalo en mallas
+**anisótropas/sliver** (hit cae al 69–82 %) y para point-location interior en
+tets (hit 83 % en el régimen interior, y además ahí es ×0.85 — más lento: los
+abanicos de Delaunay tienen ~20 tets por vértice).
 
 ---
 

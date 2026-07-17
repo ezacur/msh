@@ -313,6 +313,19 @@ function test_BVH
   fprintf( 'Dmax         ok  (%d found / %d beyond; e=0, d=Inf on misses)\n' , ...
            sum(f) , sum(~f) );
 
+  %% 7b2) Dmax VECTORIAL: cota por punto (siembra de heuristicas, exacta si
+  %%      la cota es alcanzable e inflada)
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , d0 * 0.5 );      %inalcanzable
+  assert( all( e2 == 0 ) && all( isinf( d2 ) ) , 'DmaxVec: cotas inalcanzables deben ser miss' );
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , d0*(1+1e-9) + 1e-12 );
+  assert( all( e2 >= 1 ) && max( abs( d2 - d0 ) ) < 1e-12 , ...
+          'DmaxVec: cota alcanzable inflada debe reproducir la busqueda completa' );
+  mixed = d0 * 0.5;  mixed( 1:2:end ) = Inf;                          %mezcla por punto
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , mixed );
+  assert( all( e2(1:2:end) >= 1 ) && all( e2(2:2:end) == 0 ) , 'DmaxVec: mezcla por punto' );
+  assert( max( abs( d2(1:2:end) - d0(1:2:end) ) ) < 1e-12 , 'DmaxVec: exactitud en la mezcla' );
+  fprintf( 'Dmax vector  ok  (siembra por punto: miss/exacto/mezcla)\n' );
+
   %% 7c) robust barycentrics (slivers) + feature classification + boundary
   %sliver of aspect ~1e8: bc must stay finite, in [0,1], and reconstruct cp
   Msl = struct( 'xyz' , [0 0 0 ; 1 0 0 ; 0.5 1e-8 0] , 'tri' , [1 2 3] );

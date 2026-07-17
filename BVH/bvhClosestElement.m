@@ -27,9 +27,12 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
 %                         closed meshes, tets, point clouds and mixed meshes.
 %          The active bc pattern (bc > tol) tells WHICH vertex/edge it is.
 %
-%   Dmax (numeric scalar, default Inf): SEARCH RADIUS. The best-so-far bound is
-%   seeded with Dmax, so everything farther prunes from the very root -- points
-%   beyond Dmax cost ~one node visit. NO ANSWER convention (beyond Dmax):
+%   Dmax (scalar or nP-VECTOR, default Inf): SEARCH RADIUS. The best-so-far
+%   bound is seeded with Dmax, so everything farther prunes from the very root
+%   -- points beyond Dmax cost ~one node visit. A vector seeds a PER-POINT
+%   upper bound (e.g. the nearest-vertex heuristic, see bench_vertexSeed);
+%   inflate a tight bound by (1+1e-9) if the element AT the bound must still
+%   be found. NO ANSWER convention (beyond Dmax):
 %     e = 0 , d = Inf , cp = NaN , bc = NaN , F.type = 0
 %   (non-finite query points give the same with d = NaN).
 %
@@ -56,15 +59,20 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
     B = [];
   end
   if ~exist('Dmax','var') || isempty( Dmax ), Dmax = Inf; end
-  if ~( isnumeric(Dmax) && isscalar(Dmax) && isreal(Dmax) && Dmax >= 0 )
-    error('bvhClosestElement:Dmax','Dmax must be a nonnegative scalar.');
+  if ~( isnumeric(Dmax) && isreal(Dmax) && isvector(Dmax) && all( Dmax(:) >= 0 ) )
+    error('bvhClosestElement:Dmax', ...
+          'Dmax must be a nonnegative scalar or an nP-vector (per-point bound seed).');
   end
+  Dmax = double( Dmax(:) );
   if exist( 'bvhClosestElement_mx' ,'file') ~= 3
     error('bvhClosestElement:mex','bvhClosestElement_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" bvhClosestElement_mx.cpp).');
   end
 
   P = double( P );  P(:,end+1:3) = 0;
   nP = size( P ,1);
+  if ~isscalar( Dmax ) && numel( Dmax ) ~= nP
+    error('bvhClosestElement:Dmax','per-point Dmax must have nP elements (%d vs %d).', numel(Dmax) , nP );
+  end
 
   if isempty( B ), B = BVH( M ); end
 

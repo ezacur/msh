@@ -1,42 +1,35 @@
-/* bvhClosestElement_mx  --  compiled core of bvhClosestElement.
+/* approximateClosestElement_mx  --  compiled core of approximateClosestElement.
  *
- *   [e, cp, d] = bvhClosestElement_mx( P , B , nthreads , Dmax )
+ *   [e, cp, d] = approximateClosestElement_mx( P , B , nthreads , Dmax )
  *
- *     P    nP x 3  double  query points (padded to 3 columns)
- *     B    struct          BVH blob (version >= 3): wide 4-ary nodes
- *                          (bounds4/child4/srange; sphere or AABB slots in
- *                          conservative float, pruning arithmetic in double)
- *                          + packed leaf data (pkV/pkS/pkT/pkE). The blob is
- *                          SELF-CONTAINED: the mesh itself is not needed here.
- *     nthreads scalar      OpenMP threads over the query points (default 1)
- *     Dmax scalar|nP-vec   search radius (default Inf): the best-so-far bound
- *                          is SEEDED with Dmax, so everything farther prunes
- *                          from the very root -- a point beyond Dmax costs one
- *                          node visit. An nP-VECTOR seeds a PER-POINT upper
- *                          bound (heuristics: nearest-vertex distance etc.).
- *                          Elements at d < Dmax are returned; a
- *                          point with no element within Dmax gives e = 0,
- *                          d = Inf, cp = NaN (non-finite points: d = NaN).
+ *   1-RING-OF-NEAREST-VERTEX approximate locator, two fused stages per point:
+ *     1) nearest VERTEX via a BVH over the mesh vertices (point elements,
+ *        AABB nodes; pkS centers with r = 0 are the vertices themselves)
+ *     2) EXACT distance to the vertex's incident-element fan (EsuP, packed
+ *        as CSR int32 fanStart/fanEl) -- elements tested with the same
+ *        primitives as bvhClosestElement_mx (point/segment/triangle/TET;
+ *        4 nonzero nodes ALWAYS a tetrahedron; mixed 0-padded fine).
  *
- *   Celltypes by nonzero node count: 1 vertex, 2 segment, 3 triangle,
- *   4 TETRAHEDRON (always; quads are not a thing here).
+ *   The result is an UPPER BOUND of the true distance (the fan is a real
+ *   subset of the mesh); the winning element is typically exact for 95-100%
+ *   of the queries (see bench_approximate).
  *
- *   Performance notes:
- *     - sqrt-free pruning:  |p-c|^2 > (r+best)^2 (spheres) / squared box
- *       distance vs best2 (AABBs); best updated by sqrt only on improvement.
- *     - stack entries carry their pruning key: stale nodes are culled again
- *       at pop time against the CURRENT best.
- *     - nearer child first; element-sphere pre-prune before exact tests.
- *     - WARM START: the previous point's winner seeds best2 -- with
- *       Morton-ordered queries consecutive points are spatial neighbours.
- *     - 4-wide branchless AVX Ericson kernel on all-triangle leaves
- *       (runtime CPUID, scalar fallback; degenerate lanes redone scalar).
- *     - iterative traversal, fixed stacks, all indices bounds-checked at
- *       entry: a corrupt B errors out, it cannot access-violate.
+ *   B is the blob built by approximateClosestElement( M ): a vertex AABB
+ *   blob (vol == 2) over the USED vertices, extended with
+ *     fanStart  int32 (nV+1)   CSR offsets, aligned to the blob's point rows
+ *     fanEl     int32 (nnz)    1-based mesh element ids
+ *     elV       12 x nEl double  packed element vertices (BUILD space)
+ *     elT       int32 nEl        nonzero-node count per element (0..4)
  *
- *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" bvhClosestElement_mx.cpp
+ *   Dmax scalar | nP-vector: bounds the VERTEX distance (stage 1); a point
+ *   whose nearest vertex is beyond Dmax gives e = 0, d = Inf, cp = NaN
+ *   (non-finite query points: d = NaN). Same optimizations as the exact mex:
+ *   Morton-ordered queries, warm start, sqrt-free pruning, stale-pop culls,
+ *   fused node pool, fixed stacks, fully bounds-checked blob.
  *
- * See also bvhClosestElement, BVH, bvhIntersectRay_mx.
+ *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" approximateClosestElement_mx.cpp
+ *
+ * See also approximateClosestElement, bvhClosestElement_mx, BVH.
  */
 
 #include "mex.h"
@@ -60,7 +53,7 @@ struct Elem { double cx, cy, cz, r; };     /* element sphere, pkS column */
 
 static inline double sq( double v ) { return v*v; }
 
-/* ---------------------------------------------------------------- primitives */
+/* ------------------------- exact primitives (same as bvhClosestElement_mx) */
 
 static inline double d2Point( const double* a, const double* p, double* cp )
 {
@@ -79,7 +72,6 @@ static inline double d2Seg( const double* a, const double* b, const double* p, d
   return sq(p[0]-cp[0]) + sq(p[1]-cp[1]) + sq(p[2]-cp[2]);
 }
 
-/* closest point on a triangle: Ericson, "Real-Time Collision Detection" 5.1.5 */
 static double d2Tri( const double* A, const double* B, const double* C,
                      const double* p, double* cp )
 {
@@ -89,15 +81,15 @@ static double d2Tri( const double* A, const double* B, const double* C,
 
   const double d1 = ab0*ap0 + ab1*ap1 + ab2*ap2;
   const double d2 = ac0*ap0 + ac1*ap1 + ac2*ap2;
-  if( d1 <= 0.0 && d2 <= 0.0 ) return d2Point( A, p, cp );          /* vertex A */
+  if( d1 <= 0.0 && d2 <= 0.0 ) return d2Point( A, p, cp );
 
   const double bp0=p[0]-B[0], bp1=p[1]-B[1], bp2=p[2]-B[2];
   const double d3 = ab0*bp0 + ab1*bp1 + ab2*bp2;
   const double d4 = ac0*bp0 + ac1*bp1 + ac2*bp2;
-  if( d3 >= 0.0 && d4 <= d3 ) return d2Point( B, p, cp );           /* vertex B */
+  if( d3 >= 0.0 && d4 <= d3 ) return d2Point( B, p, cp );
 
   const double vc = d1*d4 - d3*d2;
-  if( vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 ) {                       /* edge AB */
+  if( vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 ) {
     const double den = d1 - d3;
     const double t = ( den != 0.0 ) ? d1/den : 0.0;
     cp[0]=A[0]+t*ab0; cp[1]=A[1]+t*ab1; cp[2]=A[2]+t*ab2;
@@ -107,10 +99,10 @@ static double d2Tri( const double* A, const double* B, const double* C,
   const double cq0=p[0]-C[0], cq1=p[1]-C[1], cq2=p[2]-C[2];
   const double d5 = ab0*cq0 + ab1*cq1 + ab2*cq2;
   const double d6 = ac0*cq0 + ac1*cq1 + ac2*cq2;
-  if( d6 >= 0.0 && d5 <= d6 ) return d2Point( C, p, cp );           /* vertex C */
+  if( d6 >= 0.0 && d5 <= d6 ) return d2Point( C, p, cp );
 
   const double vb = d5*d2 - d1*d6;
-  if( vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 ) {                       /* edge AC */
+  if( vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 ) {
     const double den = d2 - d6;
     const double t = ( den != 0.0 ) ? d2/den : 0.0;
     cp[0]=A[0]+t*ac0; cp[1]=A[1]+t*ac1; cp[2]=A[2]+t*ac2;
@@ -118,21 +110,20 @@ static double d2Tri( const double* A, const double* B, const double* C,
   }
 
   const double va = d3*d6 - d5*d4;
-  if( va <= 0.0 && (d4-d3) >= 0.0 && (d5-d6) >= 0.0 ) {             /* edge BC */
+  if( va <= 0.0 && (d4-d3) >= 0.0 && (d5-d6) >= 0.0 ) {
     const double den = (d4-d3) + (d5-d6);
     const double t = ( den != 0.0 ) ? (d4-d3)/den : 0.0;
     cp[0]=B[0]+t*(C[0]-B[0]); cp[1]=B[1]+t*(C[1]-B[1]); cp[2]=B[2]+t*(C[2]-B[2]);
     return sq(p[0]-cp[0]) + sq(p[1]-cp[1]) + sq(p[2]-cp[2]);
   }
 
-  const double den = va + vb + vc;                                  /* interior */
+  const double den = va + vb + vc;
   if( den != 0.0 && std::isfinite( den ) ) {
     const double v = vb/den, w = vc/den;
     cp[0]=A[0]+v*ab0+w*ac0; cp[1]=A[1]+v*ab1+w*ac1; cp[2]=A[2]+v*ab2+w*ac2;
     return sq(p[0]-cp[0]) + sq(p[1]-cp[1]) + sq(p[2]-cp[2]);
   }
 
-  /* fully degenerate triangle: closest of the three edges */
   double c2[3], c3[3];
   double q1 = d2Seg( A, B, p, cp );
   double q2 = d2Seg( A, C, p, c2 );
@@ -166,7 +157,7 @@ static double d2Tet( const double* A, const double* B, const double* C,
     const double l3 = det3( BA, pA, DA ) / d0;
     const double l4 = 1.0 - l1 - l2 - l3;
     const double tol = -1e-12;
-    if( l1 >= tol && l2 >= tol && l3 >= tol && l4 >= tol ) {        /* inside */
+    if( l1 >= tol && l2 >= tol && l3 >= tol && l4 >= tol ) {
       cp[0]=p[0]; cp[1]=p[1]; cp[2]=p[2];
       return 0.0;
     }
@@ -182,8 +173,6 @@ static double d2Tet( const double* A, const double* B, const double* C,
   return q;
 }
 
-/* exact test against packed element j (verts at v = pkV + 12*j).
- * 4 nonzero nodes ALWAYS mean a tetrahedron. */
 static inline double d2Elem( const double* v, int k, const double* p, double* cp )
 {
   switch( k ) {
@@ -192,10 +181,10 @@ static inline double d2Elem( const double* v, int k, const double* p, double* cp
     case 3: return d2Tri( v, v+3, v+6, p, cp );
     case 4: return d2Tet( v, v+3, v+6, v+9, p, cp );
   }
-  return INF;   /* k == 0: empty 0-padded row */
+  return INF;
 }
 
-/* ------------------------------------------------- 4-wide triangle kernel */
+/* ------------------------------------------------------- 4-wide kernels */
 
 static int g_avx = -1;
 static bool useAVX( void )
@@ -220,12 +209,18 @@ static inline __m256d mm_dot3( __m256d ax, __m256d ay, __m256d az,
                         _mm256_mul_pd(az,bz) );
 }
 
-/* branchless Ericson over one PreTri4 block: (v0,e1,e2) in 4-wide SoA --
- * ALIGNED sequential loads, no marshalling, edges precomputed at build.
- * Same region order and same per-region arithmetic as the scalar d2Tri, so
- * selected lanes match it to the last bit; genuinely degenerate lanes are
- * redone with the scalar fallback. Null-padding lanes (id 0) produce a finite
- * garbage result that the CALLER filters by id. */
+/* 4 point-distances at once over a pt4 SoA block [x0..x3 y0..y3 z0..z3] */
+static inline void pt4blk( const double* blk, const double* p, double d2o[4] )
+{
+  const __m256d dx = _mm256_sub_pd( _mm256_set1_pd(p[0]), _mm256_loadu_pd( blk     ) );
+  const __m256d dy = _mm256_sub_pd( _mm256_set1_pd(p[1]), _mm256_loadu_pd( blk + 4 ) );
+  const __m256d dz = _mm256_sub_pd( _mm256_set1_pd(p[2]), _mm256_loadu_pd( blk + 8 ) );
+  _mm256_storeu_pd( d2o, mm_dot3( dx,dy,dz, dx,dy,dz ) );
+}
+
+/* branchless Ericson over one PreTri4 block (A, AB, AC in 4-wide SoA) --
+ * copied VERBATIM from bvhClosestElement_mx (same region order = same bits;
+ * degenerate lanes redone scalar; padding lanes filtered by id) */
 static void tri4blk( const double* blk, const double* p,
                      double d2o[4], double cpo[12] )
 {
@@ -262,7 +257,6 @@ static void tri4blk( const double* blk, const double* p,
 #undef LE
 #undef GE
 
-  /* safe divisions (unselected lanes discard the garbage) */
   const __m256d eqz1 = _mm256_cmp_pd( _mm256_sub_pd(d1,d3), zero, _CMP_EQ_OQ );
   const __m256d denAB = _mm256_blendv_pd( _mm256_sub_pd(d1,d3), one, eqz1 );
   const __m256d tAB = _mm256_div_pd( d1, denAB );
@@ -277,7 +271,6 @@ static void tri4blk( const double* blk, const double* p,
   const __m256d rden = _mm256_div_pd( one, _mm256_blendv_pd( denI, one, eqzI ) );
   const __m256d vI = _mm256_mul_pd( vb, rden ), wI = _mm256_mul_pd( vc, rden );
 
-  /* priority cascade: A, B, AB, C, AC, BC, interior (Ericson order) */
   __m256d cx = Ax, cy = Ay, cz = Az;
   __m256d done = mA;
   __m256d sel;
@@ -298,7 +291,6 @@ static void tri4blk( const double* blk, const double* p,
   PICK( mBC, _mm256_add_pd(Bx,_mm256_mul_pd(tBC,_mm256_sub_pd(Cx,Bx))),
              _mm256_add_pd(By,_mm256_mul_pd(tBC,_mm256_sub_pd(Cy,By))),
              _mm256_add_pd(Bz,_mm256_mul_pd(tBC,_mm256_sub_pd(Cz,Bz))) );
-  /* interior: everything not yet done */
   sel = _mm256_andnot_pd( done, _mm256_castsi256_pd( _mm256_set1_epi64x( -1 ) ) );
   cx = _mm256_blendv_pd( cx, _mm256_add_pd(Ax,_mm256_add_pd(_mm256_mul_pd(vI,abx),_mm256_mul_pd(wI,acx))), sel );
   cy = _mm256_blendv_pd( cy, _mm256_add_pd(Ay,_mm256_add_pd(_mm256_mul_pd(vI,aby),_mm256_mul_pd(wI,acy))), sel );
@@ -312,7 +304,6 @@ static void tri4blk( const double* blk, const double* p,
   _mm256_storeu_pd( cxx, cx );  _mm256_storeu_pd( cyy, cy );  _mm256_storeu_pd( czz, cz );
   for( int l = 0; l < 4; ++l ) { cpo[3*l]=cxx[l]; cpo[3*l+1]=cyy[l]; cpo[3*l+2]=czz[l]; }
 
-  /* degenerate lanes (interior selected with a zeroed denominator): redo scalar */
   const int degm = _mm256_movemask_pd( _mm256_and_pd( sel, eqzI ) );
   if( degm ) {
     for( int l = 0; l < 4; ++l )
@@ -342,110 +333,140 @@ static inline uint32_t expandBits( uint32_t v )
 void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
 {
   if( nrhs < 2 )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:nrhs",
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:nrhs",
                        "expected P, B [, nthreads, Dmax]." );
   if( !mxIsDouble(prhs[0]) || mxIsComplex(prhs[0]) || mxIsSparse(prhs[0]) ||
       mxGetN(prhs[0]) != 3 )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:P", "P must be nP x 3 double (pad it first)." );
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:P", "P must be nP x 3 double (pad it first)." );
   if( !mxIsStruct( prhs[1] ) )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "B must be a struct (BVH blob)." );
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "B must be a struct (approximate blob)." );
 
   const mwSize  nP = mxGetM( prhs[0] );
   const double* P  = mxGetPr( prhs[0] );
 
   int nt = ( nrhs > 2 ) ? (int)mxGetScalar( prhs[2] ) : 1;
   if( nt < 1 ) nt = 1;  if( nt > 64 ) nt = 64;
-  /* Dmax: scalar (uniform search radius) or nP-vector (PER-POINT bound seed:
-   * an upper bound on each point's distance -- e.g. from a nearest-vertex
-   * heuristic -- prunes the traversal exactly like Dmax does) */
+
   const double* DmaxV = NULL;
   double Dmax = INF;
   if( nrhs > 3 ) {
     if( !mxIsDouble(prhs[3]) || mxIsComplex(prhs[3]) || mxIsSparse(prhs[3]) )
-      mexErrMsgIdAndTxt( "bvhClosestElement_mx:Dmax",
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:Dmax",
                          "Dmax must be a double scalar or an nP-vector." );
     const mwSize nD = mxGetNumberOfElements( prhs[3] );
     if( nD == 1 ) {
       Dmax = mxGetScalar( prhs[3] );
-      if( !( Dmax >= 0.0 ) )   /* also rejects NaN */
-        mexErrMsgIdAndTxt( "bvhClosestElement_mx:Dmax", "Dmax must be nonnegative." );
+      if( !( Dmax >= 0.0 ) )
+        mexErrMsgIdAndTxt( "approximateClosestElement_mx:Dmax", "Dmax must be nonnegative." );
     } else if( nD == nP ) {
       DmaxV = mxGetPr( prhs[3] );
       for( mwSize i = 0; i < nP; ++i )
-        if( !( DmaxV[i] >= 0.0 ) )   /* also rejects NaN */
-          mexErrMsgIdAndTxt( "bvhClosestElement_mx:Dmax",
+        if( !( DmaxV[i] >= 0.0 ) )
+          mexErrMsgIdAndTxt( "approximateClosestElement_mx:Dmax",
                              "per-point Dmax must be nonnegative (no NaN)." );
     } else
-      mexErrMsgIdAndTxt( "bvhClosestElement_mx:Dmax",
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:Dmax",
                          "Dmax must be a scalar or an nP-vector." );
   }
   const double Dmax2 = Dmax * Dmax;
-  /* 5th arg (benchmarking only): nonzero disables the WARM START, to isolate
-   * how much of the pruning comes from it vs from external bound seeding */
-  const bool noWarm = ( nrhs > 4 ) && ( mxGetScalar( prhs[4] ) != 0.0 );
 
   /* ---- blob fields ---- */
   auto fld = [&]( const char* n ) -> const mxArray* {
     const mxArray* f = mxGetField( prhs[1], 0, n );
-    if( !f ) mexErrMsgIdAndTxt( "bvhClosestElement_mx:B",
-                 "B lacks field '%s' (rebuild with BVH).", n );
+    if( !f ) mexErrMsgIdAndTxt( "approximateClosestElement_mx:B",
+                 "B lacks field '%s' (rebuild with approximateClosestElement(M)).", n );
     return f;
   };
   const mxArray *fB4 = fld("bounds4"), *fC4 = fld("child4"), *fR4 = fld("srange");
-  const mxArray *fkV = fld("pkV"), *fkS = fld("pkS"), *fkT = fld("pkT"), *fkE = fld("pkE");
-  const mxArray *fP4 = fld("pk4"), *fPI = fld("pk4id"), *fS4 = fld("s4");
-  const mxArray *fV  = fld("vol");
+  const mxArray *fkS = fld("pkS"), *fkE = fld("pkE"), *fV = fld("vol");
+  const mxArray *fFS = fld("fanStart"), *fFE = fld("fanEl");
+  const mxArray *fEV = fld("elV"), *fET = fld("elT");
+  const mxArray *fP4 = fld("pt4");
+  /* fan4 trio: OPTIONAL (only pure-triangle meshes pack it) */
+  const mxArray *fF4 = mxGetField( prhs[1], 0, "fan4" );
+  const mxArray *fFI = mxGetField( prhs[1], 0, "fan4id" );
+  const mxArray *fF0 = mxGetField( prhs[1], 0, "fan4Start" );
   if( !mxIsSingle(fB4) || !mxIsInt32(fC4) || !mxIsInt32(fR4) ||
-      !mxIsDouble(fkV) || !mxIsDouble(fkS) || !mxIsInt32(fkT) || !mxIsInt32(fkE) ||
-      !mxIsDouble(fP4) || !mxIsInt32(fPI) || !mxIsInt32(fS4) )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "wrong blob field types (rebuild with BVH)." );
-  const int    vol = (int)mxGetScalar( fV );
+      !mxIsDouble(fkS) || !mxIsInt32(fkE) || !mxIsDouble(fP4) ||
+      !mxIsInt32(fFS) || !mxIsInt32(fFE) || !mxIsDouble(fEV) || !mxIsInt32(fET) )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "wrong blob field types." );
+  const bool hasF4 = ( fF4 && fFI && fF0 );
+  if( hasF4 && ( !mxIsDouble(fF4) || !mxIsInt32(fFI) || !mxIsInt32(fF0) ) )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "wrong fan4 field types." );
+  if( (int)mxGetScalar( fV ) != 2 )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B",
+                       "the approximate blob must be an AABB vertex blob (vol == 2)." );
+
   const mwSize nN  = mxGetN( fB4 );
-  const mwSize nE  = mxGetN( fkV );
-  const mwSize S   = ( vol == 1 ) ? 16 : ( vol == 2 ) ? 24 : ( vol == 3 ) ? 60 :
-                     ( vol == 4 ) ? 56 : ( vol == 5 ) ? 60 : 28;
-  if( ( vol < 1 || vol > 6 ) || nN == 0 || nE == 0 ||
-      mxGetM(fB4) != S || mxGetM(fC4) != 4 || mxGetN(fC4) != nN ||
+  const mwSize nV  = mxGetN( fkS );                      /* point elements    */
+  const mwSize nEl = mxGetN( fEV );                      /* mesh elements     */
+  const mwSize nFn = mxGetNumberOfElements( fFE );
+  const int    S   = 24;
+  if( nN == 0 || nV == 0 || nEl == 0 ||
+      mxGetM(fB4) != (mwSize)S || mxGetM(fC4) != 4 || mxGetN(fC4) != nN ||
       mxGetM(fR4) != 8 || mxGetN(fR4) != nN ||
-      mxGetM(fkV) != 12 || mxGetM(fkS) != 4 || mxGetN(fkS) != nE ||
-      mxGetNumberOfElements(fkT) != nE || mxGetNumberOfElements(fkE) != nE )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "inconsistent blob sizes (rebuild with BVH)." );
+      mxGetM(fkS) != 4 || mxGetNumberOfElements(fkE) != nV ||
+      mxGetNumberOfElements(fFS) != nV + 1 || mxGetM(fEV) != 12 ||
+      mxGetNumberOfElements(fET) != nEl ||
+      mxGetM(fP4) != 12 || mxGetN(fP4) != ( nV + 3 ) / 4 )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "inconsistent blob sizes." );
+  const mwSize nFB = hasF4 ? mxGetN( fF4 ) : 0;
+  if( hasF4 && ( mxGetM(fF4) != 36 || mxGetM(fFI) != 4 || mxGetN(fFI) != nFB ||
+                 mxGetNumberOfElements(fF0) != nV + 1 ) )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "inconsistent fan4 sizes." );
 
   const float*   W4  = (const float*)  mxGetData( fB4 );
   const int32_t* Wc  = (const int32_t*)mxGetData( fC4 );
   const int32_t* Wr  = (const int32_t*)mxGetData( fR4 );
-  const double*  vv  = mxGetPr( fkV );
   const Elem*    ee  = (const Elem*)mxGetPr( fkS );
-  const int32_t* ety = (const int32_t*)mxGetData( fkT );
   const int32_t* eii = (const int32_t*)mxGetData( fkE );
-  const double*  PK4 = mxGetPr( fP4 );
-  const int32_t* PKI = (const int32_t*)mxGetData( fPI );
-  const int32_t* Ws4 = (const int32_t*)mxGetData( fS4 );
-  const mwSize   nB  = mxGetN( fP4 );
-  if( mxGetM(fP4) != 36 || mxGetM(fPI) != 4 || mxGetN(fPI) != nB ||
-      mxGetM(fS4) != 8 || mxGetN(fS4) != nN )
-    mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "inconsistent PreTri4 pool (rebuild with BVH)." );
-  for( mwSize i = 0; i < 4*nB; ++i )
-    if( PKI[i] < 0 || PKI[i] > (int32_t)nE )
-      mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 lane id." );
+  const int32_t* fanS = (const int32_t*)mxGetData( fFS );
+  const int32_t* fanE = (const int32_t*)mxGetData( fFE );
+  const double*  elV = mxGetPr( fEV );
+  const int32_t* elT = (const int32_t*)mxGetData( fET );
+  const double*  PT4 = mxGetPr( fP4 );
+  const double*  FN4 = hasF4 ? mxGetPr( fF4 ) : NULL;
+  const int32_t* FNI = hasF4 ? (const int32_t*)mxGetData( fFI ) : NULL;
+  const int32_t* FN0 = hasF4 ? (const int32_t*)mxGetData( fF0 ) : NULL;
 
-  for( mwSize i = 0; i < nN; ++i )                       /* bounds-check      */
+  /* full bounds-check: a corrupt blob errors out, it cannot access-violate */
+  for( mwSize i = 0; i < nN; ++i )
     for( int k = 0; k < 4; ++k ) {
       const int32_t c = Wc[ i*4 + k ];
       if( c < -1 || c > (int32_t)nN )
-        mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt child index." );
+        mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt child index." );
       if( c != 0 ) {
         const int32_t lo = Wr[ i*8 + 2*k ], hi = Wr[ i*8 + 2*k + 1 ];
-        if( lo < 1 || hi < lo || hi > (int32_t)nE )
-          mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt slot range." );
-        const int32_t s0 = Ws4[ i*8 + 2*k ], sn = Ws4[ i*8 + 2*k + 1 ];
-        if( sn < 0 || ( sn > 0 && ( s0 < 1 || (mwSize)( s0 + sn - 1 ) > nB ) ) )
-          mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 slot range." );
+        if( lo < 1 || hi < lo || hi > (int32_t)nV )
+          mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt slot range." );
       }
     }
+  for( mwSize i = 0; i < nV; ++i ) {
+    if( eii[i] < 1 || (mwSize)eii[i] > nV )
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt packed vertex id." );
+    if( fanS[i] < 0 || fanS[i] > fanS[i+1] )
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt fan offsets." );
+  }
+  if( (mwSize)fanS[nV] != nFn )
+    mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "fan offsets do not match fanEl." );
+  for( mwSize i = 0; i < nFn; ++i )
+    if( fanE[i] < 1 || (mwSize)fanE[i] > nEl )
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt fan element id." );
+  for( mwSize i = 0; i < nEl; ++i )
+    if( elT[i] < 0 || elT[i] > 4 )
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt element type." );
+  if( hasF4 ) {
+    for( mwSize i = 0; i < nV; ++i )
+      if( FN0[i] < 0 || FN0[i] > FN0[i+1] )
+        mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt fan4 offsets." );
+    if( (mwSize)FN0[nV] != nFB )
+      mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "fan4 offsets do not match blocks." );
+    for( mwSize i = 0; i < 4*nFB; ++i )
+      if( FNI[i] < 0 || (mwSize)FNI[i] > nEl )
+        mexErrMsgIdAndTxt( "approximateClosestElement_mx:B", "corrupt fan4 lane id." );
+  }
 
-  /* ---- fused per-call node pool: bounds + children CONTIGUOUS (one memory
-   *      street per visit instead of two far-apart column reads) ---- */
+  /* ---- fused node pool: bounds + children contiguous ---- */
   const size_t stride = (size_t)S*4 + 16;
   std::vector<char> fused( stride * nN );
   for( mwSize i = 0; i < nN; ++i ) {
@@ -462,7 +483,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
   double* oCP = mxGetPr( mxCP );
   double* oD  = mxGetPr( mxD );
 
-  /* ---- Morton-order the queries (cache-coherent walks + useful warm starts) */
+  /* ---- Morton order (cache-coherent walks + useful warm starts) ---- */
   std::vector<int32_t> order( nP );
   for( mwSize i = 0; i < nP; ++i ) order[i] = (int32_t)i;
   if( nP >= 128 ) {
@@ -494,12 +515,11 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
 
   const int32_t* ord = order.data();
   const bool     avx = useAVX();
-  const int      WS  = (int)S;
 
   auto runRange = [&]( mwSize i0, mwSize i1 )
   {
-    int32_t jwarm = -1;              /* previous winner (packed index), per thread */
-    int32_t stkN[192];  double stkD[192];  double stkR2[192];
+    int32_t jwarm = -1;              /* previous winning vertex (packed index) */
+    int32_t stkN[192];  double stkD[192];
 
     for( mwSize qi = i0; qi < i1; ++qi ) {
       const mwSize q = (mwSize)ord[qi];
@@ -511,155 +531,70 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
         continue;
       }
 
-      double best, best2;                  /* (per-point) Dmax seeds the bound */
-      if( DmaxV ) { best = DmaxV[q];  best2 = best * best; }
-      else        { best = Dmax;      best2 = Dmax2;       }
+      /* ---- stage 1: nearest vertex (AABB traversal, point leaves) ---- */
+      double best2;
+      if( DmaxV ) { best2 = DmaxV[q]*DmaxV[q]; }
+      else        { best2 = Dmax2; }
       int32_t bestJ = -1;
-      double bcp[3] = { 0.0, 0.0, 0.0 };
 
-      if( !noWarm && jwarm >= 0 ) {                        /* warm-start seed */
-        double c[3];
-        const double q2 = d2Elem( vv + (size_t)jwarm*12, ety[jwarm], p, c );
-        if( q2 < best2 ) {
-          best2 = q2;  best = std::sqrt( q2 );  bestJ = jwarm;
-          bcp[0]=c[0]; bcp[1]=c[1]; bcp[2]=c[2];
-        }
+      if( jwarm >= 0 ) {                                   /* warm-start seed */
+        const Elem& E = ee[jwarm];
+        const double dx=p[0]-E.cx, dy=p[1]-E.cy, dz=p[2]-E.cz;
+        const double q2 = dx*dx + dy*dy + dz*dz;
+        if( q2 < best2 ) { best2 = q2;  bestJ = jwarm; }
       }
 
       int top = 1;
-      stkN[0] = 0;  stkD[0] = 0.0;  stkR2[0] = INF;        /* root: never culled */
+      stkN[0] = 0;  stkD[0] = 0.0;
       while( top ) {
         --top;
+        if( stkD[top] >= best2 ) continue;                 /* stale-pop cull */
         const int32_t ni = stkN[top];
-        if( vol == 1 || vol >= 5 ) {                       /* swept family    */
-          const double rb = stkR2[top] + best;
-          if( stkD[top] > rb*rb ) continue;                /* stale-pop cull */
-        } else {
-          if( stkD[top] >= best2 ) continue;
-        }
         const char*    nz = FZ + (size_t)ni * stride;
         const float*   nb = (const float*)nz;
-        const int32_t* nc = (const int32_t*)( nz + (size_t)WS*4 );
+        const int32_t* nc = (const int32_t*)( nz + (size_t)S*4 );
         const int32_t* nr = Wr + (size_t)ni * 8;
-        const int32_t* n4 = Ws4 + (size_t)ni * 8;
 
-        double key[4], rs[4];  int act[4];  int na = 0;
+        double key[4];  int act[4];  int na = 0;
         for( int k = 0; k < 4; ++k ) {
           if( nc[k] == 0 ) continue;
-          if( vol == 1 || vol >= 5 ) {
-            /* swept family: prune with  core2 > (r + best)^2 */
-            double d2c, r;
-            if( vol == 1 ) {
-              const double dx = p[0]-(double)nb[k], dy = p[1]-(double)nb[4+k], dz = p[2]-(double)nb[8+k];
-              d2c = dx*dx + dy*dy + dz*dz;
-              r   = (double)nb[12+k];
-            } else if( vol == 6 ) {
-              /* LSS/capsule: point-to-segment core (float segment, exact) */
-              const double q0x=(double)nb[4*0+k], q0y=(double)nb[4*1+k], q0z=(double)nb[4*2+k];
-              const double svx=(double)nb[4*3+k]-q0x, svy=(double)nb[4*4+k]-q0y, svz=(double)nb[4*5+k]-q0z;
-              const double svv = svx*svx + svy*svy + svz*svz;
-              double t = ( p[0]-q0x )*svx + ( p[1]-q0y )*svy + ( p[2]-q0z )*svz;
-              t = ( svv > 0.0 ) ? t/svv : 0.0;
-              if( t < 0.0 ) t = 0.0;  else if( t > 1.0 ) t = 1.0;
-              const double cx = q0x+t*svx, cy = q0y+t*svy, cz = q0z+t*svz;
-              d2c = ( p[0]-cx )*( p[0]-cx ) + ( p[1]-cy )*( p[1]-cy ) + ( p[2]-cz )*( p[2]-cz );
-              r   = (double)nb[4*6+k];
-            } else {
-              /* RSS: point-to-rectangle core in the (near-orthonormal) float
-               * axes basis -- deflate like the OBB */
-              double du[3];
-              for( int a = 0; a < 3; ++a ) {
-                const double ax = (double)nb[ 4*(3*a  ) + k ];
-                const double ay = (double)nb[ 4*(3*a+1) + k ];
-                const double az = (double)nb[ 4*(3*a+2) + k ];
-                du[a] = p[0]*ax + p[1]*ay + p[2]*az;
-              }
-              double eu = (double)nb[4* 9+k] - du[0];  if( du[0]-(double)nb[4*10+k] > eu ) eu = du[0]-(double)nb[4*10+k];  if( eu < 0 ) eu = 0;
-              double ev = (double)nb[4*11+k] - du[1];  if( du[1]-(double)nb[4*12+k] > ev ) ev = du[1]-(double)nb[4*12+k];  if( ev < 0 ) ev = 0;
-              const double ew = du[2] - (double)nb[4*13+k];
-              d2c = ( eu*eu + ev*ev + ew*ew ) * ( 1.0 - 1e-5 );
-              r   = (double)nb[4*14+k];
-            }
-            const double rb = r + best;
-            if( d2c > rb*rb ) continue;
-            key[na] = d2c;  rs[na] = r;  act[na] = k;  ++na;
-          } else {
-            double lb2;
-            if( vol == 2 || vol == 4 ) {     /* AABB part (kdop shares layout) */
-              double dx = (double)nb[   k] - p[0];  if( p[0]-(double)nb[ 4+k] > dx ) dx = p[0]-(double)nb[ 4+k];  if( dx < 0 ) dx = 0;
-              double dy = (double)nb[ 8+k] - p[1];  if( p[1]-(double)nb[12+k] > dy ) dy = p[1]-(double)nb[12+k];  if( dy < 0 ) dy = 0;
-              double dz = (double)nb[16+k] - p[2];  if( p[2]-(double)nb[20+k] > dz ) dz = p[2]-(double)nb[20+k];  if( dz < 0 ) dz = 0;
-              lb2 = dx*dx + dy*dy + dz*dz;
-              if( vol == 4 ) {               /* diagonal slabs, |dir|^2 = 3   */
-                const double pr[4] = { p[0]+p[1]+p[2], p[0]-p[1]+p[2],
-                                       p[0]+p[1]-p[2], p[0]-p[1]-p[2] };
-                for( int a = 0; a < 4; ++a ) {
-                  const double lo = (double)nb[ 4*(6+2*a) + k ];
-                  const double hi = (double)nb[ 4*(7+2*a) + k ];
-                  double e = lo - pr[a];  if( pr[a] - hi > e ) e = pr[a] - hi;
-                  if( e > 0 ) { const double c = e*e/3.0;  if( c > lb2 ) lb2 = c; }
-                }
-              }
-            } else {                         /* OBB: distance in the axes basis;
-                                              * float axes are near-orthonormal,
-                                              * deflate to stay conservative   */
-              double acc = 0.0;
-              for( int a = 0; a < 3; ++a ) {
-                const double ax = (double)nb[ 4*(3*a  ) + k ];
-                const double ay = (double)nb[ 4*(3*a+1) + k ];
-                const double az = (double)nb[ 4*(3*a+2) + k ];
-                const double qv = p[0]*ax + p[1]*ay + p[2]*az;
-                const double lo = (double)nb[ 4*( 9+a) + k ];
-                const double hi = (double)nb[ 4*(12+a) + k ];
-                double dxa = lo - qv;  if( qv - hi > dxa ) dxa = qv - hi;
-                if( dxa > 0 ) acc += dxa*dxa;
-              }
-              lb2 = acc * ( 1.0 - 1e-5 );
-            }
-            if( lb2 >= best2 ) continue;
-            key[na] = lb2;  rs[na] = 0;  act[na] = k;  ++na;
-          }
+          double dx = (double)nb[   k] - p[0];  if( p[0]-(double)nb[ 4+k] > dx ) dx = p[0]-(double)nb[ 4+k];  if( dx < 0 ) dx = 0;
+          double dy = (double)nb[ 8+k] - p[1];  if( p[1]-(double)nb[12+k] > dy ) dy = p[1]-(double)nb[12+k];  if( dy < 0 ) dy = 0;
+          double dz = (double)nb[16+k] - p[2];  if( p[2]-(double)nb[20+k] > dz ) dz = p[2]-(double)nb[20+k];  if( dz < 0 ) dz = 0;
+          const double lb2 = dx*dx + dy*dy + dz*dz;
+          if( lb2 >= best2 ) continue;
+          key[na] = lb2;  act[na] = k;  ++na;
         }
         for( int a = 1; a < na; ++a ) {                    /* insertion sort <=4 */
-          const double kk = key[a], rk = rs[a];  const int ak = act[a];
+          const double kk = key[a];  const int ak = act[a];
           int b = a-1;
-          while( b >= 0 && key[b] > kk ) { key[b+1]=key[b]; rs[b+1]=rs[b]; act[b+1]=act[b]; --b; }
-          key[b+1]=kk; rs[b+1]=rk; act[b+1]=ak;
+          while( b >= 0 && key[b] > kk ) { key[b+1]=key[b]; act[b+1]=act[b]; --b; }
+          key[b+1]=kk; act[b+1]=ak;
         }
         for( int a = 0; a < na; ++a ) {                    /* leaves, near->far */
           const int k = act[a];
           if( nc[k] != -1 ) continue;
-          if( vol == 1 || vol >= 5 ) { const double rb = rs[a]+best; if( key[a] > rb*rb ) continue; }
-          else if( key[a] >= best2 ) continue;
+          if( key[a] >= best2 ) continue;
           const int32_t lo = nr[2*k]-1, hi = nr[2*k+1]-1;
-          const int32_t s0 = n4[2*k]-1, sn = n4[2*k+1];
-
-          if( avx && sn > 0 ) {
-            /* PreTri4: 4-wide branchless Ericson over aligned SoA blocks;
-             * null-padding lanes are filtered by their id */
-            for( int32_t b = 0; b < sn; ++b ) {
-              const double*  blk = PK4 + (size_t)( s0 + b )*36;
-              const int32_t* ids = PKI + (size_t)( s0 + b )*4;
-              double d2v[4], cpv[12];
-              tri4blk( blk, p, d2v, cpv );
-              for( int l = 0; l < 4; ++l )
-                if( ids[l] > 0 && d2v[l] < best2 ) {
-                  best2 = d2v[l];  best = std::sqrt( best2 );  bestJ = ids[l]-1;
-                  bcp[0]=cpv[3*l]; bcp[1]=cpv[3*l+1]; bcp[2]=cpv[3*l+2];
-                }
+          if( avx ) {
+            /* Pt4: 4 distancias por bloque SoA; lanes fuera de [lo,hi]
+             * (bordes y padding) filtradas por INDICE, sin ids */
+            const int32_t b0 = lo >> 2, b1 = hi >> 2;
+            for( int32_t b = b0; b <= b1; ++b ) {
+              double d2v[4];
+              pt4blk( PT4 + (size_t)b*12, p, d2v );
+              const int32_t base = b*4;
+              const int32_t l0 = ( base < lo ) ? lo - base : 0;
+              const int32_t l1 = ( base + 3 > hi ) ? hi - base : 3;
+              for( int32_t l = l0; l <= l1; ++l )
+                if( d2v[l] < best2 ) { best2 = d2v[l];  bestJ = base + l; }
             }
           } else {
             for( int32_t j = lo; j <= hi; ++j ) {
               const Elem& E = ee[j];
               const double dx=p[0]-E.cx, dy=p[1]-E.cy, dz=p[2]-E.cz;
-              const double erb = E.r + best;
-              if( dx*dx + dy*dy + dz*dz > erb*erb ) continue;
-              double c[3];
-              const double q2 = d2Elem( vv + (size_t)j*12, ety[j], p, c );
-              if( q2 < best2 ) {
-                best2 = q2;  best = std::sqrt( q2 );  bestJ = j;
-                bcp[0]=c[0]; bcp[1]=c[1]; bcp[2]=c[2];
-              }
+              const double q2 = dx*dx + dy*dy + dz*dz;
+              if( q2 < best2 ) { best2 = q2;  bestJ = j; }
             }
           }
         }
@@ -667,17 +602,54 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
           const int k = act[a];
           if( nc[k] <= 0 ) continue;
           if( top > 188 )
-            mexErrMsgIdAndTxt( "bvhClosestElement_mx:stack", "traversal stack overflow (corrupt blob?)." );
-          stkN[top] = nc[k]-1;  stkD[top] = key[a];  stkR2[top] = rs[a];  ++top;
+            mexErrMsgIdAndTxt( "approximateClosestElement_mx:stack", "traversal stack overflow (corrupt blob?)." );
+          stkN[top] = nc[k]-1;  stkD[top] = key[a];  ++top;
         }
       }
 
       jwarm = bestJ;
-      if( bestJ >= 0 ) {
-        oE[q]      = (double)eii[bestJ];
-        oD[q]      = best;
-        oCP[q]     = bcp[0];  oCP[q+nP] = bcp[1];  oCP[q+2*nP] = bcp[2];
-      } else {                             /* nothing within Dmax */
+      if( bestJ < 0 ) {                                    /* nearest vertex beyond Dmax */
+        oE[q] = 0.0;  oD[q] = INF;
+        oCP[q] = oCP[q+nP] = oCP[q+2*nP] = mxGetNaN();
+        continue;
+      }
+
+      /* ---- stage 2: exact sweep of the vertex's fan ---- */
+      const int32_t v  = eii[bestJ];                       /* 1-based blob row */
+      double fb2 = INF, fcp[3] = { 0.0, 0.0, 0.0 };
+      int32_t fe = 0;
+      if( hasF4 && avx ) {
+        /* fan4: el abanico como bloques PreTri4, kernel 4-wide del motor
+         * exacto; lanes de relleno (id 0) filtradas */
+        const int32_t b0 = FN0[v-1], b1 = FN0[v];
+        for( int32_t b = b0; b < b1; ++b ) {
+          const double*  blk = FN4 + (size_t)b*36;
+          const int32_t* ids = FNI + (size_t)b*4;
+          double d2v[4], cpv[12];
+          tri4blk( blk, p, d2v, cpv );
+          for( int l = 0; l < 4; ++l )
+            if( ids[l] > 0 && d2v[l] < fb2 ) {
+              fb2 = d2v[l];  fe = ids[l];
+              fcp[0]=cpv[3*l]; fcp[1]=cpv[3*l+1]; fcp[2]=cpv[3*l+2];
+            }
+        }
+      } else {
+        const int32_t f0 = fanS[v-1], f1 = fanS[v];
+        for( int32_t t = f0; t < f1; ++t ) {
+          const int32_t e = fanE[t];
+          double c[3];
+          const double q2 = d2Elem( elV + (size_t)(e-1)*12, elT[e-1], p, c );
+          if( q2 < fb2 ) {
+            fb2 = q2;  fe = e;
+            fcp[0]=c[0]; fcp[1]=c[1]; fcp[2]=c[2];
+          }
+        }
+      }
+      if( fe > 0 ) {
+        oE[q]  = (double)fe;
+        oD[q]  = std::sqrt( fb2 );
+        oCP[q] = fcp[0];  oCP[q+nP] = fcp[1];  oCP[q+2*nP] = fcp[2];
+      } else {                                             /* empty fan (should not happen) */
         oE[q] = 0.0;  oD[q] = INF;
         oCP[q] = oCP[q+nP] = oCP[q+2*nP] = mxGetNaN();
       }
