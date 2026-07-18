@@ -18,7 +18,8 @@
  *   fallback), double precision, INCLUSIVE barycentric tolerance 1e-9 as in
  *   IntersectSurfaceRay_mx. Only TRIANGLE cells are tested.
  *
- *   Compile:  mex COMPFLAGS="$COMPFLAGS /openmp" bvhIntersectRay_mx.cpp
+ *   Compile:  mex COMPFLAGS="$COMPFLAGS /openmp" -lut bvhIntersectRay_mx.cpp
+ *             ( -lut links libut for Ctrl-C support; see mexInterrupt.h )
  *
  * See also bvhIntersectRay, BVH, bvhClosestElement_mx.
  */
@@ -28,6 +29,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include "mexInterrupt.h"
 #include <algorithm>
 #include <limits>
 #include <immintrin.h>
@@ -429,6 +431,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
   {
     int32_t stk[192];  double stkT[192];
     for( mwSize q = i0; q < i1; ++q ) {
+      if( mexInterrupted( (long long)( q - i0 ) ) ) break;   /* Ctrl-C: bail, let MATLAB abort */
       const double o[3] = { RY[q], RY[q+nR], RY[q+2*nR] };
       const double d[3] = { RY[q+3*nR]-o[0], RY[q+4*nR]-o[1], RY[q+5*nR]-o[2] };
       const double dd   = d[0]*d[0] + d[1]*d[1] + d[2]*d[2];
@@ -591,6 +594,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     }
   };
 
+  mexClearInterrupt();                 /* arm Ctrl-C detection for this call */
 #ifdef _OPENMP
   if( nt > 1 && mode != 3 && nR > 64 ) {
     #pragma omp parallel num_threads( nt )

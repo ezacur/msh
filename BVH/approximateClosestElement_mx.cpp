@@ -22,7 +22,8 @@
  *   Geometric primitives, region-exact barycentrics and the 4-wide Ericson
  *   kernel live in the shared header bvhKernels.h.
  *
- *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" approximateClosestElement_mx.cpp
+ *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" -lut approximateClosestElement_mx.cpp
+ *                    ( -lut links libut for Ctrl-C support; see mexInterrupt.h )
  *
  * See also approximateClosestElement, bvhClosestElement_mx, BVH.
  */
@@ -43,6 +44,7 @@
 #endif
 
 #include "bvhKernels.h"
+#include "mexInterrupt.h"
 
 /* --- pt4blk: 4 point-distances per SoA block [x0..x3 y0..y3 z0..z3] (the
  * approx locator's point-leaf kernel; every other primitive/kernel lives in
@@ -253,6 +255,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     int32_t stkN[192];  double stkD[192];
 
     for( mwSize qi = i0; qi < i1; ++qi ) {
+      if( mexInterrupted( (long long)( qi - i0 ) ) ) break;   /* Ctrl-C: bail, let MATLAB abort */
       const mwSize q = (mwSize)ord[qi];
       const double p[3] = { P[q], P[q+nP], P[q+2*nP] };
 
@@ -420,6 +423,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     }
   };
 
+  mexClearInterrupt();                 /* arm Ctrl-C detection for this call */
 #ifdef _OPENMP
   if( nt > 1 && nP > 256 ) {
     #pragma omp parallel num_threads( nt )

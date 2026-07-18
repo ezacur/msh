@@ -65,7 +65,7 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
   end
   Dmax = double( Dmax(:) );
   if exist( 'bvhClosestElement_mx' ,'file') ~= 3
-    error('bvhClosestElement:mex','bvhClosestElement_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" bvhClosestElement_mx.cpp).');
+    error('bvhClosestElement:mex','bvhClosestElement_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" -lut bvhClosestElement_mx.cpp).');
   end
 
   P = double( P );  P(:,end+1:3) = 0;

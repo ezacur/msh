@@ -30,7 +30,7 @@ function [eID, cp, d, bc, F] = approximateClosestElement( M , P , B , Dmax )
 %   exacto. Blob rancio (malla editada) -> ERROR, reconstruye con
 %   Ba = approximateClosestElement(M).
 %
-%   Requiere el MEX:  mex COMPFLAGS="$COMPFLAGS /openmp" approximateClosestElement_mx.cpp
+%   Requiere el MEX:  mex COMPFLAGS="$COMPFLAGS /openmp" -lut approximateClosestElement_mx.cpp
 %
 % See also bvhClosestElement, BVH, bench_approximate.
 
@@ -54,7 +54,7 @@ function [eID, cp, d, bc, F] = approximateClosestElement( M , P , B , Dmax )
   end
   Dmax = double( Dmax(:) );
   if exist( 'approximateClosestElement_mx' ,'file') ~= 3
-    error('approximateClosestElement:mex','approximateClosestElement_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" approximateClosestElement_mx.cpp).');
+    error('approximateClosestElement:mex','approximateClosestElement_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" -lut approximateClosestElement_mx.cpp).');
   end
 
   P = double( P );  P(:,end+1:3) = 0;

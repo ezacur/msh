@@ -40,7 +40,8 @@
  *     - iterative traversal, fixed stacks, all indices bounds-checked at
  *       entry: a corrupt B errors out, it cannot access-violate.
  *
- *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" bvhClosestElement_mx.cpp
+ *   Compile (MSVC):  mex COMPFLAGS="$COMPFLAGS /openmp" -lut bvhClosestElement_mx.cpp
+ *                    ( -lut links libut for Ctrl-C support; see mexInterrupt.h )
  *
  * See also bvhClosestElement, BVH, bvhIntersectRay_mx.
  */
@@ -61,6 +62,7 @@
 #endif
 
 #include "bvhKernels.h"
+#include "mexInterrupt.h"
 
 /* ---------------------------------------------------------------- gateway */
 
@@ -230,6 +232,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     int32_t stkN[192];  double stkD[192];  double stkR2[192];
 
     for( mwSize qi = i0; qi < i1; ++qi ) {
+      if( mexInterrupted( (long long)( qi - i0 ) ) ) break;   /* Ctrl-C: bail, let MATLAB abort */
       const mwSize q = (mwSize)ord[qi];
       const double p[3] = { P[q], P[q+nP], P[q+2*nP] };
 
@@ -457,6 +460,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     }
   };
 
+  mexClearInterrupt();                 /* arm Ctrl-C detection for this call */
 #ifdef _OPENMP
   if( nt > 1 && nP > 256 ) {
     #pragma omp parallel num_threads( nt )

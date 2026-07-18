@@ -38,7 +38,7 @@ function [xyz, cell_id, t, ray_id] = bvhIntersectRay( M , ray , B , MODE )
     otherwise, error('bvhIntersectRay:mode','MODE must be first|last|all|any.');
   end
   if exist( 'bvhIntersectRay_mx' ,'file') ~= 3
-    error('bvhIntersectRay:mex','bvhIntersectRay_mx is not compiled (mex bvhIntersectRay_mx.cpp).');
+    error('bvhIntersectRay:mex','bvhIntersectRay_mx is not compiled (mex COMPFLAGS="$COMPFLAGS /openmp" -lut bvhIntersectRay_mx.cpp).');
   end
 
   %normalize the ray shapes to N x 6
