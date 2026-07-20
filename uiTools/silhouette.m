@@ -24,10 +24,12 @@ function hS_ = silhouette( hP , varargin )
 %   and the directly visible ones with aVISIBLE (EdgeAlpha 'interp'). A scalar
 %   means [a 1]; empty (default) = uniform EdgeAlpha, no occlusion test.
 %   The occlusion runs LIVE at every camera event: one segment query per
-%   silhouette vertex against a per-mesh cached BVH (IntersectSurfaceRay_mx,
-%   sub-ms at any mesh size). Without the compiled MEX it falls back to a
-%   transverse-grid test (orthographic) / per-vertex rays (perspective), also
-%   live. An ADAPTIVE SAFETY THROTTLE caps recomputes at
+%   silhouette vertex against a per-mesh BVH blob (bvhIntersectRay_mx, engine
+%   in BVH\, sub-ms at any mesh size; independent of the msh class and of any
+%   Mesh*/mesh* function). Without the BVH engine it uses the legacy
+%   IntersectSurfaceRay_mx (internally cached tree), and without any MEX it
+%   falls back to a transverse-grid test (orthographic) / per-vertex rays
+%   (perspective), also live. An ADAPTIVE SAFETY THROTTLE caps recomputes at
 %   max( 33 ms , 3x the measured pass cost ) during event bursts (isolated
 %   events are always synchronous; the duty cycle stays ~1/3 at any mesh size)
 %   and a trailing pass lands the exact state ~50 ms after the stream pauses.
@@ -55,9 +57,9 @@ function hS_ = silhouette( hP , varargin )
 %       skipped when the edge set did not change. Non-manifold meshes (edges
 %       with >2 faces) use an exact per-event fallback. The occlusion test is
 %       one viewer->vertex segment query per silhouette vertex against a BVH
-%       built once per mesh (a couple of ms per event even at 80k+ faces);
-%       without the MEX, a transverse 2D grid (orthographic) or per-vertex
-%       rays (perspective) do the same, slower. No forced drawnow inside the
+%       blob built once per mesh in updateMesh (sub-ms per event even at 80k+
+%       faces); without the MEXes, a transverse 2D grid (orthographic) or
+%       per-vertex rays (perspective) do the same, slower. No forced drawnow inside the
 %       camera callbacks: MATLAB repaints naturally between events.
 %
 %   NOTE: this shadows the Statistics Toolbox SILHOUETTE (cluster plot); the
@@ -199,13 +201,29 @@ function updateMesh( hS )
   setappdata( hS , 'silhouette_normals'     , meshNormals( V , F ) );
   setappdata( hS , 'silhouette_lastBlocker' , zeros( size(V,1) ,1) );   %shadow cache (occlusion)
 
-  % WARM the internal tree cache of IntersectSurfaceRay_mx for this mesh: the
-  % mex builds (and caches, keyed by the mesh bytes) its BVH on the first heavy
-  % call -- forcing that build HERE moves the one-time cost to attach/edit time
-  % so the first occlusion camera event doesn't hitch. The dummy rays start far
+  % OCCLUSION ACCELERATOR: explicit BVH blob for this mesh (BVH engine in
+  % BVH\ -- independent of the msh class and of any Mesh*/mesh* function).
+  % Built HERE (attach/edit time) so the first occlusion camera event doesn't
+  % hitch, and stored in the silhouette's appdata: it dies with the silhouette
+  % and ANY number of silhouettes coexist (no shared cache to thrash --
+  % IntersectSurfaceRay_mx's internal LRU has 4 slots: 5+ occlusion
+  % silhouettes there mean a full tree REBUILD per camera event). 'noframe'
+  % keeps the blob in WORLD coordinates, so updateCamera feeds the rays to
+  % bvhIntersectRay_mx DIRECTLY (no wrapper, no frame folding).
+  Bb = [];
+  if exist( 'bvhIntersectRay_mx' ,'file') == 3 && exist( 'BVH_mx' ,'file') == 3 ...
+                                               && exist( 'BVH' ,'file') == 2
+    try, Bb = BVH( struct( 'xyz',double(V) , 'tri',double(F) ) , [] , 'noframe' ); end
+  end
+  setappdata( hS , 'silhouette_bvhBlob' , Bb );
+
+  % FALLBACK (no BVH engine on the path): WARM the internal tree cache of
+  % IntersectSurfaceRay_mx for this mesh -- the mex builds (and caches, keyed
+  % by the mesh bytes) its BVH on the first heavy call; forcing that build
+  % HERE moves the one-time cost to attach/edit time. The dummy rays start far
   % outside any bbox: each costs O(1) (root slab fails immediately). Meshes
   % under 1024 faces never get a tree (mex policy: always brute) -> no warm.
-  if exist( 'IntersectSurfaceRay_mx' , 'file' ) == 3 && size( F ,1) >= 1024
+  if isempty( Bb ) && exist( 'IntersectSurfaceRay_mx' , 'file' ) == 3 && size( F ,1) >= 1024
     kw = ceil( 8.1e6 / max( size(F,1) , 1 ) ) + 1;      %enough rays to cross the
     try                                                 %build threshold
       IntersectSurfaceRay_mx( struct( 'vertices',double(V) , 'faces',double(F) ) , ...
@@ -253,7 +271,8 @@ function updateCamera( hS , hAx )
 %                         FALLBACK (non-manifold): boundary of the front subset.
 %   5. occlusion (opt.)   per-silhouette-vertex hidden test -> interp alphas,
 %                         computed LIVE at every event: one segment query per
-%                         vertex against the per-mesh cached BVH (sub-ms; the
+%                         vertex against the per-mesh BVH blob (sub-ms; legacy
+%                         IntersectSurfaceRay_mx without the BVH engine; the
 %                         no-MEX fallbacks -- transverse 2D grid in ortho,
 %                         per-vertex rays in perspective -- are also live).
   if ~ishandle( hS  ), return; end
@@ -376,18 +395,22 @@ function updateCamera( hS , hAx )
     end
 
     verts = unique( FacesNew );  verts = verts( verts > 0 );
-    if exist( 'IntersectSurfaceRay_mx' , 'file' ) == 3
-      % MEX path: ONE occlusion ('any') query per silhouette vertex against the
-      % mex's internally cached BVH (warmed per mesh in updateMesh): some hit
-      % strictly INSIDE the segment viewer->vertex (1e-9 < t < 1-1e-5, so the
-      % vertex itself never self-reports) = occluded; unordered traversal with
-      % early exit, cheaper than 'first' and much cheaper than the old 'all'.
+    BLOB = getappdata( hS , 'silhouette_bvhBlob' );
+    if ~isempty( BLOB ) || exist( 'IntersectSurfaceRay_mx' , 'file' ) == 3
+      % MEX path: ONE occlusion ('any') query per silhouette vertex -- against
+      % the explicit per-silhouette BVH blob (bvhIntersectRay_mx; 'noframe' at
+      % build time = world-space rays go STRAIGHT to the mex) or, without the
+      % BVH engine on the path, against IntersectSurfaceRay_mx's internally
+      % cached tree (warmed per mesh in updateMesh). Both engines share the
+      % exact same 'any' semantics: some hit strictly INSIDE the segment
+      % viewer->vertex (1e-9 < t < 1-1e-5, so the vertex itself never
+      % self-reports) = occluded; unordered traversal with early exit, cheaper
+      % than 'first' and much cheaper than the old 'all'.
       %   orthographic: P0 = vertex - viewDIR (UNnormalized -> P0 falls outside
       %   the mesh, so every occluder lies at t > 0 and 'any' sees it);
       %   perspective : P0 = camera (hits behind it, t<=0, must not occlude --
       %   exactly what the 'any' window discards).
       Xv = X( verts ,:);
-      SS = struct( 'vertices',X , 'faces',double(SILhouette_faces) );
       VA = zeros( size(X,1) ,1) + occludedAlpha(2);
       if ~persp
         P0 = Xv - viewDIR;
@@ -409,8 +432,14 @@ function updateCamera( hS , hAx )
       end
       q = find( ~occ );
       if ~isempty( q )
-        [ ~ , pid , cid ] = IntersectSurfaceRay_mx( SS , [ P0(q,:) , Xv(q,:) ] , 'any' );
-        hit = pid > 0;
+        if ~isempty( BLOB )
+          [ ~ , cid ] = bvhIntersectRay_mx( [ P0(q,:) , Xv(q,:) ] , BLOB , 4 , 1 );
+          hit = cid > 0;
+        else
+          SS = struct( 'vertices',X , 'faces',double(SILhouette_faces) );
+          [ ~ , pid , cid ] = IntersectSurfaceRay_mx( SS , [ P0(q,:) , Xv(q,:) ] , 'any' );
+          hit = pid > 0;
+        end
         occ( q(hit) ) = true;
         B( verts( q( hit) ) ) = cid( hit );
         B( verts( q(~hit) ) ) = 0;
