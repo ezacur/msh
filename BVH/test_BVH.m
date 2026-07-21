@@ -75,7 +75,7 @@ function test_BVH
   B2 = BVH( B , T );                       %O(n) update
   P2 = randn( 300 ,3) * 2 + T(1:3,4).';
 
-  [ e2 , cp2 , d2 ] = bvhClosestElement( M2 , P2 , B2 );
+  [ e2 , cp2 , d2 ] = bvhClosestElement( {M2,B2} , P2 );
   [ eF , cpF , dF ] = bvhClosestElement( M2 , P2 );          %fresh build
   assert( max( abs( d2 - dF ) ) < tol , 'transform: updated BVH gives wrong distances' );
   assert( max( abs( cp2(:) - cpF(:) ) ) < 1e-8 , 'transform: updated BVH gives wrong cp' );
@@ -98,7 +98,7 @@ function test_BVH
             && isequal( B2.range , B.range ) , 'refit: hierarchy was not preserved' );
   end
   P2 = randn( 400 ,3) * 1.6;
-  [ eR_ , cpR , dR ] = bvhClosestElement( M2 , P2 , B2 );
+  [ eR_ , cpR , dR ] = bvhClosestElement( {M2,B2} , P2 );
   [ eF_ , cpF , dF ] = bvhClosestElement( M2 , P2 );         %fresh build reference
   assert( max( abs( dR - dF ) ) < tol , 'refit: distances differ from rebuilt BVH' );
   assert( max(max( abs( cpR - cpF ) )) < 1e-8 , 'refit: cp differ from rebuilt BVH' );
@@ -112,8 +112,8 @@ function test_BVH
   P2 = randn( 4000 ,3) * 1.6;
   tic; Br = BVH( B , M2 );  tRefit = toc;
   tic; Bf = BVH( M2 );      tBuild = toc;
-  tic; bvhClosestElement( M2 , P2 , Br ); tQr = toc;
-  tic; bvhClosestElement( M2 , P2 , Bf ); tQf = toc;
+  tic; bvhClosestElement( {M2,Br} , P2 ); tQr = toc;
+  tic; bvhClosestElement( {M2,Bf} , P2 ); tQf = toc;
   fprintf( 'refit        ok  (hierarchy kept; refit %.1fms vs rebuild %.1fms; query penalty x%.2f)\n' , ...
            1e3*tRefit , 1e3*tBuild , tQr/tQf );
 
@@ -135,7 +135,7 @@ function test_BVH
 
   M2 = transform( M , T );
   P2 = randn( 300 ,3) * 3;
-  [ ~ , cA , dA ] = bvhClosestElement( M2 , P2 , B2 );
+  [ ~ , cA , dA ] = bvhClosestElement( {M2,B2} , P2 );
   [ ~ , cB , dB ] = bvhClosestElement( M2 , P2 );          %fresh build reference
   assert( max( abs( dA - dB ) ) < 1e-8 , 'fold: distances differ from fresh build' );
   assert( max(max( abs( cA - cB ) )) < 1e-7 , 'fold: cp differ from fresh build' );
@@ -143,7 +143,7 @@ function test_BVH
   T2 = [ 0.5*eye(3) , [0;1;0] ; 0 0 0 1 ];                  %chained folds compose
   B3 = BVH( B2 , T2 );
   M3 = transform( M2 , T2 );
-  [ ~ , ~ , dA ] = bvhClosestElement( M3 , P2 , B3 );
+  [ ~ , ~ , dA ] = bvhClosestElement( {M3,B3} , P2 );
   [ ~ , ~ , dB ] = bvhClosestElement( M3 , P2 );
   assert( max( abs( dA - dB ) ) < 1e-8 , 'fold: chained frames compose wrong' );
 
@@ -158,7 +158,7 @@ function test_BVH
     B4 = BVH( B3 , M4 );                       %the documented fallback: refit
   end
   assert( isequal( B4.child4 , B3.child4 ) , 'refit fallback: hierarchy changed' );
-  [ ~ , ~ , dA ] = bvhClosestElement( M4 , P2 , B4 );
+  [ ~ , ~ , dA ] = bvhClosestElement( {M4,B4} , P2 );
   [ ~ , ~ , dB ] = bvhClosestElement( M4 , P2 );
   assert( max( abs( dA - dB ) ) < 1e-8 , 'refit fallback: distances differ from fresh build' );
 
@@ -190,7 +190,7 @@ function test_BVH
   assert( same , '2D fold: nodes must be untouched' );
   M2t = M2d;  M2t.xyz = X2 * R2.' + [0.4 , -0.2];
   Pq  = rand( 300 ,2)*2 - 0.5;
-  [ ~ , ~ , dA ] = bvhClosestElement( M2t , Pq , B2t );
+  [ ~ , ~ , dA ] = bvhClosestElement( {M2t,B2t} , Pq );
   [ ~ , ~ , dB ] = bvhClosestElement( M2t , Pq );
   assert( max( abs( dA - dB ) ) < 1e-8 , '2D fold: distances differ from fresh build' );
 
@@ -198,7 +198,7 @@ function test_BVH
   Ms = struct( 'xyz' , [cos(tt),sin(tt)] , 'tri' , [ (1:59).' , (2:60).' ] );
   Ps = rand( 200 ,2)*2 - 0.5;
   [ ~ , ~ , ds  ] = bvhClosestElement( Ms , Ps );
-  [ ~ , ~ , dsR ] = bvhClosestElement( Ms , Ps , BVH( Ms , Inf ) );
+  [ ~ , ~ , dsR ] = bvhClosestElement( { Ms , BVH( Ms , Inf ) } , Ps );
   assert( max( abs( ds - dsR ) ) < 1e-10 , '2D segments: BVH vs brute force differ' );
   fprintf( '2D meshes    ok  (tri+seg with 2-col vertices, homogeneous 2-D fold)\n' );
 
@@ -207,22 +207,22 @@ function test_BVH
   M = struct( 'xyz' , V , 'tri' , convhulln( V ) );
   B = BVH( M );
   P = randn( 100 ,3);
-  [ ~ , ~ , d0 ] = bvhClosestElement( M , P , B );
+  [ ~ , ~ , d0 ] = bvhClosestElement( {M,B} , P );
   fn = [ tempname , '.mat' ];
   save( fn , 'B' , 'M' );  L = load( fn );  delete( fn );
-  [ ~ , ~ , d1 ] = bvhClosestElement( L.M , P , L.B );
+  [ ~ , ~ , d1 ] = bvhClosestElement( {L.M,L.B} , P );
   assert( isequaln( d0 , d1 ) , 'blob: save/load changed the results' );
 
   Mm = M;  Mm.xyz = M.xyz * 2;                    %mesh edited, blob not updated
   try
-    bvhClosestElement( Mm , P , B );
+    bvhClosestElement( {Mm,B} , P );
     error( 'test:stale' , 'a stale blob must error' );
   catch ME
     assert( strcmp( ME.identifier , 'bvhClosestElement:staleBVH' ) , ...
             'stale blob: wrong error (%s)' , ME.identifier );
   end
   B2 = BVH( B , Mm );                          %recovery: refit (same connectivity)
-  [ ~ , ~ , d2 ] = bvhClosestElement( Mm , P , B2 );
+  [ ~ , ~ , d2 ] = bvhClosestElement( {Mm,B2} , P );
   [ ~ , ~ , d3 ] = bvhClosestElement( Mm , P );
   assert( max( abs( d2 - d3 ) ) < 1e-10 , 'stale blob: refit recovery failed' );
   fprintf( 'blob i/o     ok  (save/load identical; stale blob ERRORS; refit recovers)\n' );
@@ -240,12 +240,12 @@ function test_BVH
   MS{end+1} = struct( 'xyz' , V , 'tri' , [ convhulln(V) ; [(1:20).',(21:40).',zeros(20,1)] ] ); %mixed
   for m = 1:numel( MS )
     Pq = randn( 400 ,3) * 1.5;
-    [ ~ , ~ , dR ] = bvhClosestElement( MS{m} , Pq , BVH( MS{m} , Inf ) );  %brute
+    [ ~ , ~ , dR ] = bvhClosestElement( { MS{m} , BVH( MS{m} , Inf ) } , Pq );  %brute
     for vv = { 'sphere' , 'aabb' , 'obb' , 'kdop' , 'rss' , 'lss' }
       for ls = { [] , 16 , [4 32] }
         Bv = BVH( MS{m} , ls{1} , vv{1} );
         assert( Bv.version == 3 && strcmp( Bv.volume , vv{1} ) , 'blob: wrong meta' );
-        [ ~ , ~ , dV ] = bvhClosestElement( MS{m} , Pq , Bv );
+        [ ~ , ~ , dV ] = bvhClosestElement( {MS{m},Bv} , Pq );
         assert( max( abs( dV - dR ) ) < 1e-9 , ...
                 'volumes: %s mesh %d differs from brute force' , vv{1} , m );
       end
@@ -253,14 +253,14 @@ function test_BVH
     %world-aligned comparison piece: no centroid/PCA frame at build
     Bnf = BVH( MS{m} , [] , 'aabb' , 'noframe' );
     assert( isequal( Bnf.frame , eye(4) ) , 'noframe: frame must stay identity' );
-    [ ~ , ~ , dV ] = bvhClosestElement( MS{m} , Pq , Bnf );
+    [ ~ , ~ , dV ] = bvhClosestElement( {MS{m},Bnf} , Pq );
     assert( max( abs( dV - dR ) ) < 1e-9 , 'noframe: mesh %d differs from brute force' , m );
   end
-  %bundled {M,B} calling form
+  %bundled {M,B} form vs bare-M (fresh build) -- must agree bit for bit
   Bq = BVH( MS{1} );
   Pq = randn( 200 ,3) * 1.5;
   [ e1 , c1 , d1 ] = bvhClosestElement( { MS{1} , Bq } , Pq );
-  [ e2 , c2 , d2 ] = bvhClosestElement( MS{1} , Pq , Bq );
+  [ e2 , c2 , d2 ] = bvhClosestElement( MS{1} , Pq );
   assert( isequaln( [e1,c1,d1] , [e2,c2,d2] ) , '{M,B} form: results differ' );
   %refit on every volume type (tets, deformed) -- hierarchy kept, results exact
   Mt  = MS{4};
@@ -272,7 +272,7 @@ function test_BVH
     Bt2 = BVH( Bt , Mt2 );
     assert( isequal( Bt2.child4 , Bt.child4 ) && isequal( Bt2.perm , Bt.perm ) , ...
             'refit(%s): hierarchy changed' , vv{1} );
-    [ ~ , ~ , dA ] = bvhClosestElement( Mt2 , Pq , Bt2 );
+    [ ~ , ~ , dA ] = bvhClosestElement( {Mt2,Bt2} , Pq );
     assert( max( abs( dA - dB ) ) < 1e-9 , 'refit(%s): distances differ' , vv{1} );
   end
   fprintf( 'volumes      ok  (6 volumes x 3 leaf configs x 5 celltypes == brute; noframe; {M,B}; refit x6)\n' );
@@ -285,14 +285,14 @@ function test_BVH
   BL = BVH( ML );
   assert( ~isequal( BL.frame(1:3,1:3) , eye(3) ) , 'PCA: frame should be rotated' );
   PL = randn( 300 ,3) * 6;
-  [ ~ , ~ , dA ] = bvhClosestElement( ML , PL , BL );
-  [ ~ , ~ , dB ] = bvhClosestElement( ML , PL , BVH( ML , Inf ) );
+  [ ~ , ~ , dA ] = bvhClosestElement( {ML,BL} , PL );
+  [ ~ , ~ , dB ] = bvhClosestElement( { ML , BVH( ML , Inf ) } , PL );
   assert( max( abs( dA - dB ) ) < 1e-8 , 'PCA: distances differ from brute force' );
   %far-from-origin robustness: centering keeps float bounds tight & correct
   MF = MS{1};  MF.xyz = MF.xyz + 1e7;
   PF = randn( 200 ,3)*2 + 1e7;
   [ ~ , ~ , dA ] = bvhClosestElement( MF , PF );
-  [ ~ , ~ , dB ] = bvhClosestElement( MF , PF , BVH( MF , Inf ) );
+  [ ~ , ~ , dB ] = bvhClosestElement( { MF , BVH( MF , Inf ) } , PF );
   assert( max( abs( dA - dB ) ) < 1e-6 , 'centering: far-from-origin results differ' );
   fprintf( 'build frame  ok  (PCA-aligned diagonal blob; centered at 1e7 from origin)\n' );
 
@@ -303,7 +303,7 @@ function test_BVH
   Dmax = 1.0;
 
   [ ~ , ~ , d0 ] = bvhClosestElement( M , P );           %reference: full search
-  [ e1 , c1 , d1 , bc1 ] = bvhClosestElement( M , P , [] , Dmax );
+  [ e1 , c1 , d1 , bc1 ] = bvhClosestElement( M , P , Dmax );
   f = d0 < Dmax;
   assert( max( abs( d1(f) - d0(f) ) ) < 1e-12 , 'Dmax: found distances differ' );
   assert( all( e1(f) >= 1 ) , 'Dmax: found points must have an element' );
@@ -315,13 +315,13 @@ function test_BVH
 
   %% 7b2) Dmax VECTORIAL: cota por punto (siembra de heuristicas, exacta si
   %%      la cota es alcanzable e inflada)
-  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , d0 * 0.5 );      %inalcanzable
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , d0 * 0.5 );           %inalcanzable
   assert( all( e2 == 0 ) && all( isinf( d2 ) ) , 'DmaxVec: cotas inalcanzables deben ser miss' );
-  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , d0*(1+1e-9) + 1e-12 );
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , d0*(1+1e-9) + 1e-12 );
   assert( all( e2 >= 1 ) && max( abs( d2 - d0 ) ) < 1e-12 , ...
           'DmaxVec: cota alcanzable inflada debe reproducir la busqueda completa' );
   mixed = d0 * 0.5;  mixed( 1:2:end ) = Inf;                          %mezcla por punto
-  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , [] , mixed );
+  [ e2 , ~ , d2 ] = bvhClosestElement( M , P , mixed );
   assert( all( e2(1:2:end) >= 1 ) && all( e2(2:2:end) == 0 ) , 'DmaxVec: mezcla por punto' );
   assert( max( abs( d2(1:2:end) - d0(1:2:end) ) ) < 1e-12 , 'DmaxVec: exactitud en la mezcla' );
   fprintf( 'Dmax vector  ok  (siembra por punto: miss/exacto/mezcla)\n' );
@@ -512,22 +512,22 @@ function test_BVH
   Bk = BVH( M , [] , 'kdop' );
   Br2 = BVH( M , [] , 'rss' );
   Bl2 = BVH( M , [] , 'lss' );
-  tic; bvhClosestElement( M , P , Ba );      tA = toc;
-  tic; bvhClosestElement( M , P , Bs );      tS = toc;
-  tic; bvhClosestElement( M , P , Bo );      tO = toc;
-  tic; bvhClosestElement( M , P , Bk );      tK = toc;
-  tic; bvhClosestElement( M , P , Br2 );     tR2 = toc;
-  tic; bvhClosestElement( M , P , Bl2 );     tL2 = toc;
+  tic; bvhClosestElement( {M,Ba} , P );      tA = toc;
+  tic; bvhClosestElement( {M,Bs} , P );      tS = toc;
+  tic; bvhClosestElement( {M,Bo} , P );      tO = toc;
+  tic; bvhClosestElement( {M,Bk} , P );      tK = toc;
+  tic; bvhClosestElement( {M,Br2} , P );     tR2 = toc;
+  tic; bvhClosestElement( {M,Bl2} , P );     tL2 = toc;
   Bbrute = BVH( M , Inf );
   Ps = P( 1:250 ,:);
-  tic; bvhClosestElement( M , Ps , Bbrute ); tBrute = toc * size(P,1)/size(Ps,1);
+  tic; bvhClosestElement( {M,Bbrute} , Ps ); tBrute = toc * size(P,1)/size(Ps,1);
   fprintf( 'timing:  %d tris, %d pts:  build %.3fs | aabb %.2f | sphere %.2f | obb %.2f | kdop %.2f | rss %.2f | lss %.2f us/pt | brute ~%.1fs -> x%.0f\n' , ...
            size(M.tri,1) , size(P,1) , tBuild , 1e6*tA/size(P,1) , 1e6*tS/size(P,1) , ...
            1e6*tO/size(P,1) , 1e6*tK/size(P,1) , 1e6*tR2/size(P,1) , 1e6*tL2/size(P,1) , tBrute , tBrute/tA );
 
   Pfar = randn( 20000 ,3)*0.5 + 40;                    %all far from the mesh
-  tic; bvhClosestElement( M , Pfar , Ba );        tFull = toc;
-  tic; bvhClosestElement( M , Pfar , Ba , 0.5 );  tDmax = toc;
+  tic; bvhClosestElement( {M,Ba} , Pfar );        tFull = toc;
+  tic; bvhClosestElement( {M,Ba} , Pfar , 0.5 );  tDmax = toc;
   fprintf( 'timing:  far cloud %d pts:  full %.2f us/pt | Dmax %.3f us/pt  ->  x%.0f\n' , ...
            size(Pfar,1) , 1e6*tFull/size(Pfar,1) , 1e6*tDmax/size(Pfar,1) , tFull/tDmax );
 
@@ -536,7 +536,7 @@ function test_BVH
   %use Dmax for far fields). Near-surface queries are the real workload:
   w  = randi( size(V,1) , size(P,1) ,1);
   Pn = V(w,:) .* ( 1 + 0.02*randn( size(P,1) ,1) );
-  tic; bvhClosestElement( M , Pn , Ba );  tN = toc;
+  tic; bvhClosestElement( {M,Ba} , Pn );  tN = toc;
   fprintf( 'timing:  aabb by query distance:  far %.2f | near-surface %.2f us/pt\n' , ...
            1e6*tA/size(P,1) , 1e6*tN/size(P,1) );
 
@@ -546,12 +546,12 @@ function test_BVH
   Bs = BVH( Mt , [] , 'sphere' );  Bt = BVH( Mt );
   Bo = BVH( Mt , [] , 'obb' );     Bk = BVH( Mt , [] , 'kdop' );
   Br2 = BVH( Mt , [] , 'rss' );    Bl2 = BVH( Mt , [] , 'lss' );
-  tic; bvhClosestElement( Mt , Pt , Bs );  tS = toc;
-  tic; bvhClosestElement( Mt , Pt , Bt );  tA = toc;
-  tic; bvhClosestElement( Mt , Pt , Bo );  tO = toc;
-  tic; bvhClosestElement( Mt , Pt , Bk );  tK = toc;
-  tic; bvhClosestElement( Mt , Pt , Br2 ); tR2 = toc;
-  tic; bvhClosestElement( Mt , Pt , Bl2 ); tL2 = toc;
+  tic; bvhClosestElement( {Mt,Bs} , Pt );  tS = toc;
+  tic; bvhClosestElement( {Mt,Bt} , Pt );  tA = toc;
+  tic; bvhClosestElement( {Mt,Bo} , Pt );  tO = toc;
+  tic; bvhClosestElement( {Mt,Bk} , Pt );  tK = toc;
+  tic; bvhClosestElement( {Mt,Br2} , Pt ); tR2 = toc;
+  tic; bvhClosestElement( {Mt,Bl2} , Pt ); tL2 = toc;
   fprintf( 'timing:  %d tets, %d pts:  sphere %.2f | aabb %.2f | obb %.2f | kdop %.2f | rss %.2f | lss %.2f us/pt\n' , ...
            size(Mt.tri,1) , size(Pt,1) , 1e6*tS/size(Pt,1) , 1e6*tA/size(Pt,1) , ...
            1e6*tO/size(Pt,1) , 1e6*tK/size(Pt,1) , 1e6*tR2/size(Pt,1) , 1e6*tL2/size(Pt,1) );
@@ -563,10 +563,10 @@ function test_BVH
   Pw = [ 2*randn(10000,2) , rand(10000,1)*7 - 0.5 ];
   Ba = BVH( Mw );                    Bl = BVH( Mw , [] , 'lss' );
   Bo = BVH( Mw , [] , 'obb' );       Br = BVH( Mw , [] , 'rss' );
-  tic; bvhClosestElement( Mw , Pw , Ba );  tA = toc;
-  tic; bvhClosestElement( Mw , Pw , Bl );  tL = toc;
-  tic; bvhClosestElement( Mw , Pw , Bo );  tO = toc;
-  tic; bvhClosestElement( Mw , Pw , Br );  tR = toc;
+  tic; bvhClosestElement( {Mw,Ba} , Pw );  tA = toc;
+  tic; bvhClosestElement( {Mw,Bl} , Pw );  tL = toc;
+  tic; bvhClosestElement( {Mw,Bo} , Pw );  tO = toc;
+  tic; bvhClosestElement( {Mw,Br} , Pw );  tR = toc;
   fprintf( 'timing:  %d segs (helix), %d pts:  aabb %.2f | lss %.2f | obb %.2f | rss %.2f us/pt\n' , ...
            size(Mw.tri,1) , size(Pw,1) , 1e6*tA/size(Pw,1) , 1e6*tL/size(Pw,1) , ...
            1e6*tO/size(Pw,1) , 1e6*tR/size(Pw,1) );
@@ -577,7 +577,7 @@ end
 %% brute force (single-leaf BVH, same primitives) vs tree + cp/bc consistency
 function checkMesh( M , P , name , tol )
   [ e  , cp  , d  , bc ] = bvhClosestElement( M , P );                    %default tree
-  [ ~  , ~   , dR      ] = bvhClosestElement( M , P , BVH( M ,Inf) ); %brute force
+  [ ~  , ~   , dR      ] = bvhClosestElement( { M , BVH( M ,Inf) } , P ); %brute force
 
   assert( max( abs( d - dR ) ) < tol , '%s: BVH and brute-force distances differ' , name );
   assert( max( abs( sqrt(sum((P(:,1:3)-cp).^2,2)) - d ) ) < tol , '%s: |p-cp| ~= d' , name );

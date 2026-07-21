@@ -97,7 +97,7 @@ function test_msh
 
   rays = [ randn(200,3)*3 , randn(200,3)*0.2 ];
   [ xyz1 , c1 , t1 ] = M.intersectRay( rays , 'first' );
-  [ ~ , c2 , t2 ] = bvhIntersectRay( struct('xyz',V,'tri',F) , rays , [] , 'first' );
+  [ ~ , c2 , t2 ] = bvhIntersectRay( struct('xyz',V,'tri',F) , rays , 'first' );
   w = c1 > 0;
   assert( isequal( w , c2 > 0 ) && max( abs( t1(w) - t2(w) ) ) < 1e-12 , ...
           'intersectRay: differs from engine' );

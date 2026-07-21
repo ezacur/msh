@@ -88,7 +88,7 @@ function test_bvhClosestElement_tets
     P   = rand( 5000 ,3)*1.2 - 0.1;
     B   = BVH( M );
 
-    tic;  [ e , cp , d , bc ] = bvhClosestElement( M , P , B );  tOur = toc;
+    tic;  [ e , cp , d , bc ] = bvhClosestElement( {M,B} , P );  tOur = toc;
 
     ns = min( 5000 , max( 100 , ceil( 2e7 / size(TES,1) ) ) );   %cap tsearchn work
     tic;  tsearchn( X , TES , P(1:ns,:) );  tTS = toc * 5000/ns;

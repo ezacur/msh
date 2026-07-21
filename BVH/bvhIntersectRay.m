@@ -1,10 +1,13 @@
-function [xyz, cell_id, t, ray_id] = bvhIntersectRay( M , ray , B , MODE )
+function [xyz, cell_id, t, ray_id] = bvhIntersectRay( M , ray , MODE )
 %bvhIntersectRay  Ray (line) vs mesh-triangle intersections on the BVH blob.
 %
-%   [xyz,cell,t,rid] = bvhIntersectRay( M , ray )            builds/uses a BVH
-%   [xyz,cell,t,rid] = bvhIntersectRay( M , ray , B )        reuses a blob
-%   [xyz,cell,t,rid] = bvhIntersectRay( {M,B} , ray )        mesh+blob bundled
+%   [xyz,cell,t,rid] = bvhIntersectRay( M , ray )            builds a BVH, queries
+%   [xyz,cell,t,rid] = bvhIntersectRay( {M,B} , ray )        reuses a blob (bundled)
 %   [ ... ]          = bvhIntersectRay( ...   , MODE )
+%
+%   The TARGET always travels whole in the first argument: a bare mesh (blob
+%   built on the fly) or the {M,B} bundle. Every other position has a FIXED
+%   meaning (the old positional-B form bvhIntersectRay(M,ray,B,MODE) is gone).
 %
 %   Same ray conventions as tools/IntersectSurfaceRay: ray is 2x3 [p0;p1],
 %   2x3xN pages, or N x 6 rows [p0,p1]; the LINE hit = p0 + t*(p1-p0) with t
@@ -22,14 +25,17 @@ function [xyz, cell_id, t, ray_id] = bvhIntersectRay( M , ray , B , MODE )
 %
 % See also BVH, bvhClosestElement, IntersectSurfaceRay.
 
-  %bundled form: bvhIntersectRay( {M,B} , ray , MODE )
+  %target: a bare mesh M (blob built on the fly) or the {M,B} bundle
   if iscell( M )
-    if nargin > 2, MODE = B; end          %shift: 3rd arg is MODE in this form
     B = M{2};  M = M{1};
-  elseif nargin < 3
+  else
     B = [];
   end
-  if ~exist('MODE','var') || isempty( MODE ), MODE = 'first'; end
+  if nargin < 3 || isempty( MODE ), MODE = 'first'; end
+  if isstruct( MODE ) || iscell( MODE )   %old positional-B form: clear migration error
+    error('bvhIntersectRay:mode', ...
+          'the positional-B form bvhIntersectRay(M,ray,B,MODE) was removed: bundle it as bvhIntersectRay({M,B},ray,MODE).');
+  end
   switch lower( MODE )
     case 'first', modeI = 1;
     case 'last',  modeI = 2;

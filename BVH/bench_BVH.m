@@ -31,7 +31,7 @@ function bench_BVH
 
     for PP = { {Pnear,'near-surface'} , {Pfar,'far'} }
       P = PP{1}{1};  tag = PP{1}{2};
-      [ ~ , ~ , dT ] = bvhClosestElement( M , P , BVH( M , Inf ) );   %ground truth
+      [ ~ , ~ , dT ] = bvhClosestElement( { M , BVH( M , Inf ) } , P );   %ground truth
       [ eT , ~ , ~ ] = bvhClosestElement( M , P );                       %tie reference
 
       fprintf( '\n--- %d tris, %d pts (%s) ---\n' , size(M.tri,1) , nP , tag );

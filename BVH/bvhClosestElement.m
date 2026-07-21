@@ -1,12 +1,15 @@
-function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
+function [eID, cp, d, bc, F] = bvhClosestElement( M , P , Dmax )
 %bvhClosestElement  Closest mesh element (and point on it) to query points.
 %
 %   [e,cp,d,bc,F] = bvhClosestElement( M , P )          builds the blob, queries
-%   [e,cp,d,bc,F] = bvhClosestElement( M , P , B )      reuses a prebuilt BVH
-%   [e,cp,d,bc,F] = bvhClosestElement( {M,B} , P )      same, mesh+blob bundled:
-%                                    "on the FIRST argument, find the closest
-%                                    element to the SECOND one"
+%   [e,cp,d,bc,F] = bvhClosestElement( {M,B} , P )      reuses a prebuilt BVH,
+%                                    mesh+blob bundled: "on the FIRST argument,
+%                                    find the closest element to the SECOND one"
 %   [ ... ]       = bvhClosestElement( ... , Dmax )     search radius
+%
+%   The TARGET always travels whole in the first argument: a bare mesh (blob
+%   built on the fly) or the {M,B} bundle. Every other position has a FIXED
+%   meaning (the old positional-B form bvhClosestElement(M,P,B) is gone).
 %
 %   OUTPUTS (nP rows each):
 %     e    row of M.tri of the closest element
@@ -51,14 +54,17 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , B , Dmax )
 %
 % See also BVH, bvhIntersectRay, plotBVH, tsearchn, MeshBoundary.
 
-  %bundled form: bvhClosestElement( {M,B} , P , Dmax )
+  %target: a bare mesh M (blob built on the fly) or the {M,B} bundle
   if iscell( M )
-    if nargin > 2, Dmax = B; end          %shift: 3rd arg is Dmax in this form
     B = M{2};  M = M{1};
-  elseif nargin < 3
+  else
     B = [];
   end
-  if ~exist('Dmax','var') || isempty( Dmax ), Dmax = Inf; end
+  if nargin < 3 || isempty( Dmax ), Dmax = Inf; end
+  if isstruct( Dmax )                     %old positional-B form: clear migration error
+    error('bvhClosestElement:Dmax', ...
+          'the positional-B form bvhClosestElement(M,P,B) was removed: bundle it as bvhClosestElement({M,B},P).');
+  end
   if ~( isnumeric(Dmax) && isreal(Dmax) && isvector(Dmax) && all( Dmax(:) >= 0 ) )
     error('bvhClosestElement:Dmax', ...
           'Dmax must be a nonnegative scalar or an nP-vector (per-point bound seed).');
