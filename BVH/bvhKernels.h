@@ -2,14 +2,14 @@
  *
  *   Single source of truth for the geometric primitives (point/segment/triangle
  *   /tetrahedron distance), the REGION-EXACT barycentric emitters, the 4-wide
- *   AVX Ericson kernel, and the Morton bit-spread -- included by BOTH
- *   bvhClosestElement_mx.cpp and approximateClosestElement_mx.cpp so a fix or a
+ *   AVX Ericson kernel, and the Morton bit-spread -- included by
+ *   bvhClosestElement_mx.cpp and fanClosestElement_mx.cpp so a fix or a
  *   precision change lives in ONE place (they used to be copied verbatim).
  *
  *   All symbols are `static`/`static inline` -> internal linkage, one private
  *   copy per translation unit (each MEX is its own TU), no ODR concerns.
  *
- * See also bvhClosestElement_mx.cpp, approximateClosestElement_mx.cpp.
+ * See also bvhClosestElement_mx.cpp, fanClosestElement_mx.cpp.
  */
 #ifndef BVH_KERNELS_H
 #define BVH_KERNELS_H
