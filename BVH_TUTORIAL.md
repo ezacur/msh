@@ -117,7 +117,8 @@ S = {Mtri, B};                                      % la "malla acelerada"
 [e1, cp1, d1] = bvhClosestElement(S, P1);           % queries baratas
 [e2, cp2, d2] = bvhClosestElement(S, P2);
 [xyz, cell, t] = bvhIntersectRay(S, rays);          % el MISMO blob sirve rayos
-% (la forma clásica bvhClosestElement(M, P, B) sigue funcionando)
+% (el objetivo SIEMPRE viaja entero en el primer argumento: M o {M,B};
+%  la antigua forma posicional bvhClosestElement(M, P, B) se retiró)
 ```
 
 Propiedades que lo diferencian del locator persistente de VTK:
@@ -247,8 +248,8 @@ tras un `BVH(B,T)` o un refit.
 ## 4. `bvhClosestElement` a fondo
 
 ```matlab
-[e, cp, d, bc, F] = bvhClosestElement({M,B}, P, Dmax)     % forma recomendada
-[e, cp, d, bc, F] = bvhClosestElement(M, P, B, Dmax)      % forma clásica
+[e, cp, d, bc, F] = bvhClosestElement({M,B}, P, Dmax)     % blob reutilizado
+[e, cp, d, bc, F] = bvhClosestElement(M, P, Dmax)         % auto-build
 ```
 
 - `e`: fila de `M.tri` del ganador · `cp`: punto más cercano · `d`: distancia.
@@ -337,32 +338,41 @@ rápido, y funciona en mallas de tets **deformadas** (no-Delaunay):
 tid = e;  tid(d > 0) = NaN;          % == tsearchn(W, Mtet.tri, P)
 ```
 
-### Localizador APROXIMADO: `approximateClosestElement`
+### Localizador APROXIMADO: `fanClosestElement`
 
-Misma firma y convenciones, pero heurístico: vértice más cercano (BVH de
-puntos) + distancia **exacta** a su abanico de elementos (EsuP, fusionado en
-el MEX). Garantías: `d_apx >= d_exacta` **siempre** (cota superior, asertada
-en `bench_approximate`); el elemento es el correcto el ~95–99 % de las veces
-en mallas razonables, con error acotado por la escala local. Todos los
-celltypes; en **nubes de puntos y polilíneas es exacto** en la práctica
-(100 % medido).
+Mismas convenciones de salida, pero heurístico y **componible**: (1) el NODO
+más cercano a cada punto — por point-BVH, o **dado por el llamador** — y
+(2) distancia **exacta** a su abanico de elementos incidentes (EsuP,
+recalculado de `M` en cada llamada). Nunca toca el árbol de elementos ni
+siembra nada (sembrar el árbol exacto no gana nada — medido en
+`bench_seedCeiling`). Garantías: `d_fan >= d_exacta` **siempre** (cota
+superior, asertada en `bench_fanClosestElement`); con nodos de etapa 1 el
+elemento es el correcto el ~95–100 % de las veces, con error acotado por la
+escala local. Todos los celltypes; en **nubes de puntos y polilíneas es
+exacto** en la práctica (100 % medido).
 
 ```matlab
-Ba = approximateClosestElement( M );                 % blob propio (~= coste del exacto)
-[e,cp,d,bc,F] = approximateClosestElement( {M,Ba} , P [, Dmax] );
-% OJO: Dmax corta por la distancia AL VERTICE (etapa 1), no al elemento
+[e,cp,d,bc,F] = fanClosestElement( M , P [, Dmax] );          % point-BVH al vuelo
+[e,cp,d,bc,F] = fanClosestElement( {M,nodes} , P [, Dmax] );  % nodos dados (nP-vector
+                                                              %  o escalar broadcast)
+Bn = BVH( struct('xyz',M.xyz,'tri',(1:size(M.xyz,1)).') );    % point-BVH estandar
+[e,cp,d,bc,F] = fanClosestElement( {M,Bn} , P [, Dmax] );     % ...reutilizado
+% OJO: Dmax corta la etapa 1 por la distancia AL NODO; con nodos dados
+% filtra por la distancia al elemento. Vertice suelto como semilla -> miss.
 ```
 
-El MEX lleva su propia artillería: hojas de vértices como bloques SoA con
-kernel AVX de 4 puntos (`pt4`), abanicos de triángulos pre-empacados como
-bloques PreTri4 barridos con el kernel 4-wide del motor exacto (`fan4`, solo
-mallas puras de triángulos), hojas grandes `[32 128]` (barrido medido), Morton
-+ warm-start + pool fusionado. Cuándo pagar la imprecisión (medido, 1 hilo,
-`bench_approximate`): **far-field ×2.7–6.3** (22→3.6 µs/pt en 200k tris),
-**caja media ×1.1–5.1**, near-surface ×1.3–2.1. Evítalo en mallas
-**anisótropas/sliver** (hit cae al 69–82 %) y para point-location interior en
-tets (hit 83 % en el régimen interior, y además ahí es ×0.85 — más lento: los
-abanicos de Delaunay tienen ~20 tets por vértice).
+El diseño prima la composabilidad sobre los µs: la única estructura
+reutilizable es el **point-BVH estándar** (`BVH()` de siempre, no un blob a
+medida), los nodos semilla pueden venir de donde quieras, y el abanico se
+recalcula por llamada (O(nnz) sort — despreciable en lotes, gratis si pasas
+los nodos). Medido (1 hilo, `bench_fanClosestElement`, 52k tris):
+**far-field ×3.5**, caja media ×2.6, near-surface ×0.9, sobre-superficie
+×0.5 — para trabajo pegado a la superficie usa el exacto, que ahí ya vuela.
+Evítalo en mallas **anisótropas/sliver** y para point-location interior en
+tets (abanicos de Delaunay ~20 tets/vértice: hit 86 % y más lento que el
+exacto salvo en far-field). El `approximateClosestElement` histórico (blob
+fusionado + kernels AVX propios, algo más rápido pero monolítico) se retiró
+en favor de esta versión; vive en el historial de git.
 
 ---
 
@@ -532,7 +542,7 @@ Monohilo en la máquina de desarrollo (52k tris / 26k tets, 20k queries):
 | closest-point, punto **cerca** de la superficie (workload típico) | **0.5** (×6-8 vs `vtkClosestElement`) |
 | closest-point, punto lejano (aabb) | ~7 (×11-38 vs vtk; con rss aún menos) |
 | closest-point lejano con `Dmax` | **0.11** |
-| closest-point lejano APROXIMADO (`approximateClosestElement`) | **1.4** (×4.9, 100 % acierto medido) |
+| closest-point lejano APROXIMADO (`fanClosestElement`) | ×3.5 vs exacto (hit 100 % medido en far) |
 | point-location / closest en **tets** | **2.3–2.6** (×7–60 vs `tsearchn`) |
 | rayo `first` / `any` (blob `[16 64]`) | **0.315 / 0.29** (×1.10 / paridad vs `IntersectSurfaceRay_mx`) |
 | build / refit / plegado de semejanza | 40 ms / 2 ms / **0.014 ms** |
@@ -580,13 +590,15 @@ B  = BVH(M, s)                         % escalar == [s s]; Inf = fuerza bruta
 B  = BVH(B, T)                         % TRANSFORMAR: semejanza O(1) / afín bake
 B  = BVH(B, M2)                        % REFIT a malla deformada (C, O(n))
 
-[e,cp,d,bc,F] = bvhClosestElement({M,B}, P)         % forma recomendada
+[e,cp,d,bc,F] = bvhClosestElement({M,B}, P)         % blob reutilizado
 [e,cp,d,bc,F] = bvhClosestElement({M,B}, P, Dmax)   % radio de búsqueda
 [e,cp,d,bc,F] = bvhClosestElement(M, P)             % auto-build
-[e,cp,d,bc,F] = bvhClosestElement(M, P, B, Dmax)    % forma clásica
 
 [xyz,cell,t,rid] = bvhIntersectRay({M,B}, rays, MODE)   % first|last|all|any
 [xyz,cell,t,rid] = bvhIntersectRay(M, rays)             % auto-build, 'first'
+
+[e,cp,d,bc,F] = fanClosestElement(M, P)             % aproximado por abanico
+[e,cp,d,bc,F] = fanClosestElement({M,nodes|Bn}, P)  % semillas dadas / point-BVH
 
 h = plotBVH(B, M)                      % visualizador interactivo del blob
 ```
