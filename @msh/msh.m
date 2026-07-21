@@ -22,25 +22,27 @@ classdef msh < matlab.mixin.CustomDisplay
 %     PLANAR / FLAT: una malla con nsd==3 cuyos vertices caen todos en UN
 %     plano es "planar" (M.isPlanar); si ese plano es exactamente z == 0 es
 %     "flat" (M.isFlat). Es descripcion, no tipo: nsd sigue siendo 3.
-%     campos por nodo/cara: M.addField('xyzFOO',v) / M.getField('xyzFOO') ...
+%     campos por nodo/cara: M.AddField('xyzFOO',v) / M.GetField('xyzFOO') ...
 %
-%   CACHEDPROPS (el corazon de la clase): derivados definidos por un REGISTRO
-%   nombre -> { computeFcn , eventos }. Se calculan al pedirlos, se guardan, y
-%   ante cada EVENTO de edicion o bien caen, o bien quedan PENDIENTES de una
-%   actualizacion barata (replay perezoso en el proximo acceso), o bien
-%   sobreviven intactos si el evento no les afecta.
+%   CPs (cached props, el corazon de la clase): derivados definidos por un
+%   REGISTRO nombre -> { computeFcn , eventos }. Se calculan al pedirlos, se
+%   guardan, y ante cada EVENTO de edicion o bien caen, o bien quedan
+%   PENDIENTES de una actualizacion barata (replay perezoso en el proximo
+%   acceso), o bien sobreviven intactos si el evento no les afecta.
 %
-%     M.cached.BVH                 acceso (computa/replay si hace falta)
-%     M.BVH_                       alias con sufijo '_' de lo anterior
-%     M.cached                     tabla de definiciones y estados
-%     M.cached.BVH.frame           indexar dentro del valor
-%     M.cached.BVH.delete          borra el valor (la definicion queda)
-%     M = M.cached.BVH.removeProp  borra definicion y valor
-%     M = M.cached.BVH.set( x )    siembra un valor a mano (aislado, COW)
-%     M.cached.BVH.changeCoords    el handler del evento (invocable)
+%     M.bvh                     LEE (perezoso: HIT / replay / computa+guarda)
+%     M.bvh_                    RECALCULA a la fuerza (descarta valor y log,
+%                               computa fresco, guarda y devuelve)
+%     M.bvh.frame / M.bvh_.frame   indexar dentro del valor
+%     M.CP                      tabla de definiciones y estados (plano de control)
+%     M.CP.bvh                  el valor (lectura perezosa, como M.bvh)
+%     M.CP.bvh.delete           borra el valor (la definicion queda)
+%     M = M.CP.bvh.removeProp   borra definicion y valor
+%     M = M.CP.bvh.set( x )     siembra un valor a mano (aislado, COW)
+%     M.CP.bvh.changeCoords     el handler del evento (invocable)
 %
-%     M = M.defineCachedProp( 'foo' , @(m) ... , evento , handler|[] , ... )
-%     M = M.removeCachedProp( 'foo' )
+%     M = M.DefineCP( 'foo' , @(m) ... , evento , handler|[] , ... )
+%     M = M.RemoveCP( 'foo' )
 %
 %   EVENTOS (de especifico a general): las ediciones disparan
 %     M.V = ...  -> [changeNodeCount] [changeDim] changeCoords
