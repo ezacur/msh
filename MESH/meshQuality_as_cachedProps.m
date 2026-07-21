@@ -1,10 +1,10 @@
 function M = meshQuality_as_cachedProps( M , varargin )
-%MESHQUALITY_AS_CACHEDPROPS  Las metricas de meshQuality como cachedProps de un msh.
+%MESHQUALITY_AS_CACHEDPROPS  Las metricas de meshQuality como CPs de un msh.
 %
 %   M = meshQuality_as_cachedProps( M )                    todas las de su celltype
 %   M = meshQuality_as_cachedProps( M , 'area' , ... )     solo las pedidas
 %
-%   EJEMPLO de definicion DINAMICA de cachedProps (no forma parte de la clase):
+%   EJEMPLO de definicion DINAMICA de CPs (no forma parte de la clase):
 %   registra UNA ENTRADA POR METRICA, cada una con su computeFcn delegando en
 %   meshQuality y, donde la matematica lo permite, un handler del evento
 %   'transform' que ACTUALIZA el valor cacheado sin recomputar nada:
@@ -20,16 +20,17 @@ function M = meshQuality_as_cachedProps( M , varargin )
 %   handler de semejanza), el handler LANZA y la cascada del replay recomputa —
 %   nunca un valor silenciosamente incorrecto.
 %
-%   Acceso y gestion, como cualquier cachedProp:
-%       q = M.aspectratio_;             % == M.cached.aspectratio
-%       M.cached                        % tabla (estado + eventos)
-%       M = M.cached.area.removeProp;   % desregistrar una
+%   Acceso y gestion, como cualquier CP:
+%       q = M.aspectratio;              % lee (perezoso; == M.CP.aspectratio)
+%       q = M.aspectratio_;             % RECALCULA a la fuerza
+%       M.CP                            % tabla (estado + eventos)
+%       M = M.CP.area.removeProp;       % desregistrar una
 %
-%   Invalidacion: cualquier edicion de coordenadas fuera de transform() y
+%   Invalidacion: cualquier edicion de coordenadas fuera de Transform() y
 %   cualquier edicion de conectividad tiran el valor (se recomputa al pedirlo).
 %
 %   NOTAS: (1) registra con el NOMBRE CANONICO de la metrica ('area',
-%   'aspectratio', ...): si ya tenias una cachedProp con ese nombre, la
+%   'aspectratio', ...): si ya tenias una CP con ese nombre, la
 %   REDEFINE. (2) meshQuality comparte intermedios entre metricas pedidas en
 %   UNA llamada; aqui cada metrica se computa por separado — la cache paga en
 %   el acceso REPETIDO, no en el primer barrido (para un barrido unico llama a
@@ -37,7 +38,7 @@ function M = meshQuality_as_cachedProps( M , varargin )
 %   el momento del registro; si luego cambias el tipo de celdas, las
 %   definiciones obsoletas erroran al recomputar (honesto).
 %
-% See also msh/defineCachedProp, meshQuality, msh_CLASS_TUTORIAL.md (secc. 6).
+% See also msh/DefineCP, meshQuality, msh_CLASS_TUTORIAL.md (secc. 6).
 
   %tabla por celltype: { nombre canonico , tipo de update ante transform }
   %  'inv'  invariante (semejanzas)      'len'  escala s (semejanzas)
@@ -84,7 +85,7 @@ function M = meshQuality_as_cachedProps( M , varargin )
 
   for i = 1:size( TBL ,1)
     name = TBL{i,1};
-    cf   = @(m) meshQuality( toStruct( m ) , name );      %captura name por valor
+    cf   = @(m) meshQuality( ToStruct( m ) , name );      %captura name por valor
     args = { 'changeCoords' , [] , 'changeConnectivity' , [] };
     switch TBL{i,2}
       case 'inv',  h = @(v,m,T) sameIfSimilarity( v , T , m.nsd );
@@ -97,7 +98,7 @@ function M = meshQuality_as_cachedProps( M , varargin )
       otherwise,   h = [];
     end
     if ~isempty( h ), args = [ args , { 'transform' , h } ]; end       %#ok<AGROW>
-    M = M.defineCachedProp( name , cf , args{:} );
+    M = M.DefineCP( name , cf , args{:} );
   end
 
 end
