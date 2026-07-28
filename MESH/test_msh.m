@@ -312,5 +312,140 @@ function test_msh
   try, Mn2.cached; catch, ok12 = true; end                 %#ok<VUNUS>
   assert( ok12 , 'M.cached debe errar (el proxy es M.CP)' );
 
+  %% 13) log de replay: dos ediciones IDENTICAS son DOS aplicaciones
+  %regresion: la dedup del log colapsaba edits `isequal`, y como 'transform' se
+  %aplica de forma INCREMENTAL, dos Transform con la MISMA T dejaban el valor a
+  %medio transformar (normales giradas la mitad; bvh desincronizado del mesh).
+  a  = pi/6;
+  Tr = eye(4);  Tr(1:2,1:2) = [ cos(a) -sin(a) ; sin(a) cos(a) ];
+  Md = msh( V , F );
+  Md.triNormals;                                       %fresh
+  Md = Md.Transform( Tr );
+  Md = Md.Transform( Tr );                             %misma T: DOS giros
+  assert( max( abs( Md.triNormals(:) - Md.triNormals_(:) ) ) < 1e-10 , ...
+          'log: dos transform identicas deben aplicarse dos veces (triNormals)' );
+  Md = msh( V , F );
+  Md.bvh;
+  Md = Md.Transform( Tr );  Md = Md.Transform( Tr );
+  Pd = 3*randn( 50 ,3);
+  [~,~,dLazy] = Md.ClosestElement( Pd );               %bvh via replay del log
+  Md.bvh_;                                             %verdad: rebuild
+  [~,~,dTrue] = Md.ClosestElement( Pd );
+  assert( max( abs( dLazy - dTrue ) ) < 1e-9 , ...
+          'log: el bvh del replay debe coincidir con el rebuild' );
+  %tres veces, y mezclado con una T distinta
+  b   = pi/7;
+  Tr2 = eye(4);  Tr2(1:2,1:2) = [ cos(b) -sin(b) ; sin(b) cos(b) ];
+  Md  = msh( V , F );  Md.triNormals;
+  Md  = Md.Transform( Tr );  Md = Md.Transform( Tr );
+  Md  = Md.Transform( Tr2 ); Md = Md.Transform( Tr );
+  assert( max( abs( Md.triNormals(:) - Md.triNormals_(:) ) ) < 1e-10 , ...
+          'log: cadena de transform repetidas y mezcladas' );
+
+  %% 14) el evento MAS ESPECIFICO decide, y [] invalida (no lo pisa un handler)
+  Mv2 = msh( V , F );
+  Mv2 = Mv2.DefineCP( 'vetoed' , @(m) m.nV , ...
+                      'changeNodeCount' , [] , ...          %especifico: invalida
+                      'changeCoords'    , @(v,m) v );        %general: handler
+  assert( Mv2.vetoed == 700 , 'veto: valor inicial' );
+  Mv2.V = [ V ; 0 0 0 ];                          %dispara changeNodeCount+changeCoords
+  assert( Mv2.vetoed == 701 , 'veto: el [] especifico debe invalidar, no el handler general' );
+  %sin declarar el especifico, el handler general SI sirve al mismo edit
+  Mh2 = msh( V , F );
+  Mh2 = Mh2.DefineCP( 'kept' , @(m) m.nV , 'changeCoords' , @(v,m) -1 );
+  Mh2.kept;
+  Mh2.V = [ V ; 0 0 0 ];
+  assert( Mh2.kept == -1 , 'sin el especifico declarado, manda el handler general' );
+
+  %% 15) guarda de ciclos: una CP que se pide a si misma no agota la pila
+  Mc2 = msh( V , F );
+  Mc2 = Mc2.DefineCP( 'selfie' , @(m) m.selfie + 1 );
+  ok15 = false;
+  try, Mc2.selfie; catch ME, ok15 = strcmp( ME.identifier , 'cacheHandle:cycle' ); end  %#ok<VUNUS>
+  assert( ok15 , 'ciclo: debe dar cacheHandle:cycle, no stack overflow' );
+  %y la guarda se libera: la CP sigue usable tras el error
+  Mc2 = Mc2.DefineCP( 'selfie' , @(m) 42 );
+  assert( Mc2.selfie == 42 , 'ciclo: onCleanup debe liberar la clave en vuelo' );
+
+  %% 16) Tidy/RemoveFaces/RemoveNodes/Append CONSERVAN metadatos y registro
+  %regresion: los 4 hacian msh( MeshXxx( M.ToStruct() ) ), y el puente legado no
+  %lleva VIZ/INFO/DEBUG ni cachePROPS -> devolvian el registro de FABRICA, o sea
+  %que un Tidy() borraba en silencio las definiciones de CP del usuario (27 -> 9).
+  Mm = msh( V , F );
+  Mm.VIZ.FaceColor = 'r';
+  Mm.INFO.paciente = 'X7';
+  Mm = Mm.DefineCP( 'miCP' , @(m) 42 , 'changeConnectivity' , [] );
+  Mm = Mm.AddField( 'xyzTemp' , rand(700,1) );
+  for op = { @(m) m.Tidy() , @(m) m.RemoveFaces(1:10) , ...
+             @(m) m.RemoveNodes(1:5) , @(m) m.Append( msh(V*2,F) ) }
+    M16 = op{1}( Mm );
+    assert( strcmp( M16.VIZ.FaceColor ,'r') , 'metadatos: VIZ debe sobrevivir' );
+    assert( strcmp( M16.INFO.paciente ,'X7') , 'metadatos: INFO debe sobrevivir' );
+    assert( M16.HasField('xyzTemp') , 'metadatos: los campos deben sobrevivir' );
+    assert( M16.miCP == 42 , 'metadatos: la DEFINICION de CP debe sobrevivir' );
+  end
+  Mq16 = meshQuality_as_cachedProps( msh( V , F ) );
+  assert( isequal( sort(fieldnames( struct16( Mq16 ) )) , ...
+                   sort(fieldnames( struct16( Mq16.Tidy() ) )) ) , ...
+          'metadatos: Tidy no debe perder las 27 CPs de calidad' );
+
+  %% 17) arrays de msh: las CPs resuelven; concatenar NO fusiona
+  Aa = [ msh( V , F ) , msh( V*2 , F ) ];
+  assert( numel( Aa ) == 2 , 'array: concatenar NO fusiona (eso es Append)' );
+  assert( numel( Aa([1 2]) ) == 2 , 'array: indexar pelado sigue siendo indexar' );
+  assert( Aa(2).nV == 700 , 'array: props Dependent' );
+  assert( Aa(2).bvh.nE == size(F,1) , 'array: las CPs resuelven en un elemento' );
+  assert( Aa(1).bvh_.nE == size(F,1) , 'array: el sufijo _ tambien' );
+  assert( Aa(2).CP.bvh.nE == size(F,1) , 'array: el proxy CP tambien' );
+  [ n1 , n2 ] = Aa.nV;
+  assert( n1 == 700 && n2 == 700 , 'array: lista separada por comas' );
+  assert( numel( {Aa.nV} ) == 2 , 'array: la cs-list expande en una celda' );
+  ok17 = false;
+  try, x17 = Aa.nV; catch ME, ok17 = strcmp(ME.identifier,'msh:csList'); end  %#ok<VUNUS>
+  assert( ok17 , 'array: un valor de un array de 2 debe ERRAR, no coger el 1o' );
+  o17 = evalc( 'disp( Aa )' );
+  assert( contains( o17 ,'1x2 msh array') && contains( o17 ,'(2)') , ...
+          'array: display propio por elemento' );
+  %Append acepta escalar, array y celda; manda el receptor
+  assert( Aa(1).Append( Aa(2) ).nV == 1400 , 'Append: msh escalar' );
+  assert( Aa(1).Append( Aa(2:end) ).nV == 1400 , 'Append: array de msh' );
+  assert( Aa(1).Append( {Aa(2),Aa(2)} ).nV == 2100 , 'Append: celda de msh' );
+  assert( Aa(1).Append( struct('xyz',V*2,'tri',F) ).nV == 1400 , 'Append: struct legado' );
+  %cadena a traves de un metodo: builtin se comia la cola y perdia las CPs
+  assert( Aa(1).Transform( eye(4) ).bvh.nE == size(F,1) , 'cadena: metodo -> CP' );
+  assert( Mm.Tidy().miCP == 42 , 'cadena: metodo -> CP de usuario' );
+
+  %% 18) ClosestElement inyecta la CP `boundary` en el 5o output
+  %el wrapper del motor recalculaba MeshBoundary en CADA llamada; la clase ya lo
+  %tiene cacheado. Solo se pide cuando hace falta (nargout > 4).
+  Vb18 = V;  Tb18 = F;  Tb18( 1:40 ,:) = [];        %malla ABIERTA: borde real
+  M18 = msh( Vb18 , Tb18 );
+  P18 = Vb18( 1:200 ,:) * 1.02;
+  [ ~,~,~,~,F18 ] = M18.ClosestElement( P18 );
+  [ ~,~,~,~,G18 ] = bvhClosestElement( { struct('xyz',Vb18,'tri',Tb18) , BVH( M18.ToStruct() ) } , P18 );
+  assert( isequal( F18.type , G18.type ) && isequal( F18.onBoundary , G18.onBoundary ) , ...
+          'boundary: la clase y el motor deben coincidir' );
+  assert( any( G18.onBoundary ) , 'boundary: la malla abierta debe marcar algun onBoundary' );
+  %pedir 3 salidas NO debe forzar el calculo de la CP boundary
+  M19 = msh( Vb18 , Tb18 );
+  [ ~,~,d19 ] = M19.ClosestElement( P18 );                                %#ok<ASGLU>
+  o19 = evalc( 'disp( M19.CP )' );
+  b19 = regexp( o19 , '\n\s+boundary\s+\(sin calcular\)' , 'once' );
+  assert( ~isempty( b19 ) , '3 salidas no deben forzar el calculo de la CP boundary' );
+  %pedir 5 la calcula y queda cacheada
+  M20 = msh( Vb18 , Tb18 );
+  [ ~,~,~,~,~ ] = M20.ClosestElement( P18 );
+  o20 = evalc( 'disp( M20.CP )' );
+  assert( isempty( regexp( o20 , '\n\s+boundary\s+\(sin calcular\)' , 'once' ) ) , ...
+          '5 salidas deben dejar la CP boundary calculada' );
+
   fprintf( 'ALL msh class tests passed.\n' );
+end
+
+function S = struct16( M )
+  %los nombres de las CPs registradas, para comparar registros
+  o = evalc( 'disp( M.CP )' );
+  nm = regexp( o , '\n\s{4}([a-z]\w*)\s' , 'tokens' );
+  S = struct();
+  for i = 1:numel( nm ), S.( nm{i}{1} ) = true; end
 end

@@ -29,6 +29,13 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , Dmax )
 %                         vertices; wireframes: a free end). Always false for
 %                         closed meshes, tets, point clouds and mixed meshes.
 %          The active bc pattern (bc > tol) tells WHICH vertex/edge it is.
+%          COSTE: calcular .onBoundary necesita el BORDE de la malla
+%          (MeshBoundary, O(nF) sobre la conectividad) -- ~32 ms en una malla de
+%          87k caras, que es x80 el resto de la llamada. Si ya lo tienes, pasalo
+%          en el campo M.boundary y se usa tal cual; un M.boundary VACIO
+%          significa "malla cerrada, sin borde" y tampoco recalcula nada. La
+%          clase msh lo hace sola: M.ClosestElement inyecta su CP `boundary`
+%          cuando pides el 5o output.
 %
 %   Dmax (scalar or nP-VECTOR, default Inf): SEARCH RADIUS. The best-so-far
 %   bound is seeded with Dmax, so everything farther prunes from the very root
@@ -139,8 +146,14 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , Dmax )
 
     k  = sum( Tri > 0 ,2);                       %nonzero nodes per face
     kk = size( Tri ,2);
+    %el borde es lo MAS CARO de todo el camino (MeshBoundary es O(nF) sobre la
+    %conectividad: ~32 ms en una malla de 87k caras, x80 el resto de la llamada,
+    %y en una malla CERRADA se paga entero para devolver todo false). Depende
+    %solo de la conectividad, asi que el llamante puede pasarlo ya calculado en
+    %M.boundary -- que es exactamente lo que la clase msh tiene cacheado en su
+    %CP `boundary`. Sin el campo se recalcula, como siempre.
     if kk == 3 && all( k == 3 )                  %pure triangle surface
-      Bed = MeshBoundary( Tri );
+      Bed = meshBoundaryOf( M , Tri );
       if ~isempty( Bed )
         Bed  = sort( Bed ,2);
         Bvx  = unique( Bed );
@@ -163,7 +176,7 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , Dmax )
         end
       end
     elseif kk == 2                               %wireframe: free ends
-      fe = MeshBoundary( Tri );                  %degree-1 node ids
+      fe = meshBoundaryOf( M , Tri );            %degree-1 node ids
       if ~isempty( fe )
         wv = find( F.type == 1 );
         if ~isempty( wv )
@@ -183,4 +196,27 @@ function [eID, cp, d, bc, F] = bvhClosestElement( M , P , Dmax )
     d  = d  * fscale;
   end
 
+end
+
+function Bd = meshBoundaryOf( M , Tri )
+%el borde de M: el que traiga el llamante en M.boundary, o recalculado.
+%
+%   sin campo            -> MeshBoundary( Tri )          (comportamiento historico)
+%   campo VACIO          -> [] , SIN recalcular          (malla cerrada: es la
+%                                                         respuesta, y es el caso
+%                                                         que mas se ahorra)
+%   campo con forma OK   -> se usa tal cual
+%   campo con forma MALA -> se ignora y se recalcula (un borde erroneo silenciaria
+%                           onBoundary sin avisar; mejor pagar que mentir)
+  if ~( isstruct( M ) && isfield( M , 'boundary' ) )
+    Bd = MeshBoundary( Tri );  return;
+  end
+  Bd = M.boundary;
+  if isempty( Bd ), Bd = [];  return; end
+  w  = size( Tri ,2);
+  ok = isnumeric( Bd ) && isreal( Bd ) && ismatrix( Bd ) && ...
+       ( ( w == 3 && size( Bd ,2) == 2 ) || ...        %superficie: aristas
+         ( w == 2 && size( Bd ,2) == 1 ) ) && ...      %wireframe: nodos sueltos
+       all( Bd(:) >= 1 ) && all( Bd(:) <= max( Tri(:) ) );
+  if ~ok, Bd = MeshBoundary( Tri ); end
 end

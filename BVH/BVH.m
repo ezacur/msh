@@ -63,6 +63,12 @@ function B = BVH( M , arg2 , varargin )
 %     .bounds4          per-slot node volumes, 4-wide (single, conservatively
 %                       rounded OUTWARD: the float bounds always contain the
 %                       double geometry)
+%     .node4            pool de nodos FUNDIDO (uint8): por nodo, sus bounds4 Y
+%                       sus child4 contiguos, con stride multiplo de 64. Es lo
+%                       que recorren las queries: una visita = un registro, en
+%                       vez de dos lecturas en arrays distintos. Se construye
+%                       aqui (antes lo rehacia cada llamada al mex y lo tiraba).
+%                       Derivado de bounds4/child4: si los tocas a mano, refunde.
 %     .child4,.srange   4-ary tree: children (>0 node, -1 leaf, 0 empty) and
 %                       per-slot element ranges into .perm (int32)
 %     .perm,.pkV,.pkS,.pkT,.pkE  element permutation + packed leaf data
@@ -168,6 +174,7 @@ function B = BVH( M , arg2 , varargin )
               'volume'  , volume       ,...
               'bounds4' , b4           ,...
               'child4'  , c4           ,...
+              'node4'   , fuseNodes( b4 , c4 ) ,...
               'srange'  , r4           ,...
               'perm'    , pm           ,...
               'pkV'     , pkV          ,...
@@ -185,6 +192,7 @@ function B = BVH( M , arg2 , varargin )
               'nsd'     , nsd          ,...
               'X'       , X            ,...
               'Tri'     , int32( T )   );   %conectividad SIEMPRE int32 en el blob
+  checkBlobIndices( B );    %una vez aqui, para que las consultas no lo repitan
 end
 
 %% ------------------------------------------------------------------ helpers
@@ -314,5 +322,74 @@ function B = bvhRefit( B , M )
   [ eLo , eHi ] = elementBoxes( X , T );
   [ eVv , eNv ] = elementVerts( X , T );
   [ B.bounds4 , B.pk4 ] = BVH_mx( eC , eR , eLo , eHi , B.srange , B.child4 , B.pkE , B.vol , eVv , eNv );
+  B.node4 = fuseNodes( B.bounds4 , B.child4 );   %el refit cambia bounds: refundir
   [ B.pkV , B.pkS ] = packLeafData( X , T , eC , eR , double( B.perm ) );
+  checkBlobIndices( B );
+end
+
+%% -------------------------------------------- validacion de indices del blob
+function checkBlobIndices( B )
+%Comprueba ENTEROS los indices del blob: hijos, rangos de slot y lane ids del
+%pool PreTri4. Se hace UNA VEZ, aqui (al construir y al refitear), vectorizado.
+%
+%   Antes lo hacia cada mex de consulta en CADA llamada, recorriendo 4*nB + 4*nN
+%   entradas: 277 000 comprobaciones de rango y ~78 us en una malla de 87k caras,
+%   mas que la consulta misma en lotes pequenos -- y revalidando un blob que es
+%   inmutable. Los mexes ahora solo muestrean (O(1)); la garantia fuerte esta
+%   aqui. Si manipulas bounds4/child4/srange/s4/pk4id a mano, vuelve a llamarla.
+  nN = size( B.child4 ,2);
+  nE = size( B.pkS ,2);
+  nB = size( B.pk4 ,2);
+  c  = int32( B.child4(:) );
+  if any( c < -1 | c > int32( nN ) )
+    error('BVH:corruptBlob','indice de hijo fuera de [-1,%d].', nN );
+  end
+  if any( int32( B.pk4id(:) ) < 0 | int32( B.pk4id(:) ) > int32( nE ) )
+    error('BVH:corruptBlob','lane id de PreTri4 fuera de [0,%d].', nE );
+  end
+  %rangos de slot: solo los slots OCUPADOS (child4 ~= 0) tienen que ser validos
+  occ = reshape( B.child4 ,4,[]) ~= 0;                 %4 x nN
+  r   = double( B.srange );  lo = r(1:2:8,:);  hi = r(2:2:8,:);
+  if any( lo(occ) < 1 ) || any( hi(occ) < lo(occ) ) || any( hi(occ) > nE )
+    error('BVH:corruptBlob','rango de slot fuera de [1,%d] o invertido.', nE );
+  end
+  s  = double( B.s4 );  s0 = s(1:2:8,:);  sn = s(2:2:8,:);
+  if any( sn(occ) < 0 )
+    error('BVH:corruptBlob','contador de bloques PreTri4 negativo.');
+  end
+  w = occ & sn > 0;
+  if any( s0(w) < 1 ) || any( s0(w) + sn(w) - 1 > nB )
+    error('BVH:corruptBlob','rango de bloques PreTri4 fuera de [1,%d].', nB );
+  end
+end
+
+%% ------------------------------------------------- registro de nodo fundido
+function nd = fuseNodes( b4 , c4 )
+%NODE4: por cada nodo, sus 4 volumenes de slot Y sus 4 hijos CONTIGUOS.
+%
+%   Las queries necesitan las dos cosas en cada visita, pero viven en dos
+%   mxArrays distintos (dos direcciones sin relacion = dos fallos de cache
+%   independientes por nodo, y el prefetcher no puede seguir dos streams).
+%   Fundirlos deja una visita = un registro contiguo.
+%
+%   Antes esto lo hacia CADA llamada al mex (un vector temporal + memcpy sobre
+%   los nN nodos, ~10 ns/nodo: 110 us en 87k caras, 580 us en 200k) y se tiraba
+%   al volver. Es dato derivado del blob con la MISMA vida que el blob, asi que
+%   se construye aqui una vez -- el mismo argumento que justifica cachear el BVH.
+%
+%   MEDIDO Y DESCARTADO: rellenar el stride a multiplo de 64 (128 en vez de 112
+%   para aabb) para que cada nodo ocupe 2 lineas de cache exactas en vez de
+%   cruzarlas (~2.75 de media). Da entre -5.8% y +4.5% segun el regimen, o sea
+%   RUIDO, y cuesta un 12% mas de memoria: se deja el stride justo.
+%
+%   srange/s4 NO se funden aqui a proposito: solo se leen en las HOJAS, y
+%   meterlos haria que cada nodo INTERNO (que son la mayoria) arrastrase 176 B
+%   en vez de 112 sin usarlos.
+  S      = size( b4 ,1);                  %floats de bounds por nodo (por volumen)
+  nN     = size( b4 ,2);
+  stride = 4*S + 16;
+  nd = zeros( stride , nN , 'uint8' );
+  nd( 1:4*S        , : ) = reshape( typecast( single( b4(:) ) ,'uint8') , 4*S , nN );
+  nd( 4*S+(1:16)   , : ) = reshape( typecast( int32(  c4(:) ) ,'uint8') , 16  , nN );
+  nd = nd(:);
 end

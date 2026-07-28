@@ -167,12 +167,43 @@ classdef msh < matlab.mixin.CustomDisplay
   end
 
   %% =============================================== DOT-DISPATCH (subsref)
-  % orden de despacho:  M.CP...  ->  M.<cp>_ (RECALCULA)  ->  M.<cp> (LEE)
-  % -> alias legados -> builtin (props reales, metodos, encadenados).
+  % orden de despacho:  A(i)... (arrays) -> M.CP... -> M.<cp>_ (RECALCULA)
+  % -> M.<cp> (LEE) -> alias legados -> builtin (props reales, metodos,
+  % encadenados).
   % NB: dentro de los metodos de la clase este subsref NO corre (regla de
   % MATLAB) -- el codigo interno usa accessCached/recomputeCached directamente.
+  % ARRAYS: msh es clase de VALOR, asi que [M1 M2], A(i)=M, repmat y
+  % M([1 1 1]) construyen arrays. Sin el reenvio de abajo, A(2).bvh moria en
+  % builtin con noSuchMethodOrField (parecia "esa CP no existe"). Concatenar NO
+  % fusiona: para eso esta Append, explicito.
   methods
     function varargout = subsref( M , s )
+      if strcmp( s(1).type , '()' ) && numel( s ) > 1
+        M = builtin( 'subsref' , M , s(1) );   %A(2).bvh: indexa y sigue con .bvh
+        s = s(2:end);
+      end
+      if ~isscalar( M ) && strcmp( s(1).type , '.' )
+        %A.bvh / A([1 2]).bvh: lista separada por comas, un valor por elemento
+        %(como en un struct array). Se reentra en este mismo despachador; dentro
+        %de un metodo M(i) es indexacion builtin, no vuelve a pasar por aqui.
+        %OJO: solo para acceso con PUNTO -- un A([1 2]) pelado es indexacion
+        %normal y tiene que caer a builtin, no partirse elemento a elemento.
+        n = numel( M );
+        if n == 0, varargout = {}; return; end
+        if nargout <= 1 && n > 1
+          %contexto de ASIGNACION esperando UN valor (medido: ahi nargout==1,
+          %mientras que expandir la lista -- max(A.nV), {A.nV}, [a,b]=A.nV --
+          %llega con nargout==n). Devolver el elemento 1 en silencio seria la
+          %trampa; MATLAB tampoco lo hace con un struct array.
+          error('msh:csList', ...
+                'un array de %d msh da %d resultados: indexa un elemento (A(1).%s) o pide [a,b] = ...', ...
+                n , n , char( s(1).subs ) );
+        end
+        out = cell( 1 , n );
+        for i = 1:n, out{i} = subsref( M(i) , s ); end
+        varargout = out;
+        return;
+      end
       if strcmp( s(1).type , '.' ) && ( ischar( s(1).subs ) || isstring( s(1).subs ) )
         nm = char( s(1).subs );
         if strcmp( nm , 'CP' )                 %plano de control (proxy)
@@ -209,6 +240,24 @@ classdef msh < matlab.mixin.CustomDisplay
           case 'xyz',      s(1).subs = 'V';
           case 'tri',      s(1).subs = 'F';
         end
+      end
+      %builtin resuelve el resto (props reales, metodos, alias). PERO si queda
+      %CADENA por detras y el eslabon devuelve un msh, hay que REENTRAR aqui: si
+      %no, builtin sigue la cola sin el despachador y las CPs no existen
+      %(M.Tidy().miCP / M.Transform(T).bvh morian con noSuchMethodOrField).
+      %Se consume el eslabon MAS su '()' de argumentos si lo lleva; cuando la
+      %cadena acaba en la llamada no se parte, para no tocar el nargout de los
+      %metodos multi-salida (ClosestElement, IntersectRay).
+      k = 1;
+      if numel( s ) > 1 && strcmp( s(2).type , '()' ), k = 2; end
+      if numel( s ) > k
+        r = builtin( 'subsref' , M , s(1:k) );
+        if isa( r , 'msh' )
+          [ varargout{ 1:max( nargout , 1 ) } ] = subsref( r , s(k+1:end) );
+        else
+          [ varargout{ 1:max( nargout , 1 ) } ] = builtin( 'subsref' , r , s(k+1:end) );
+        end
+        return;
       end
       [ varargout{ 1:max( nargout , 1 ) } ] = builtin( 'subsref' , M , s );
     end
@@ -278,8 +327,16 @@ classdef msh < matlab.mixin.CustomDisplay
       %[e,cp,d,bc,F] = M.ClosestElement( P [, Dmax] )  -- usa el bvh cacheado
       M.dbg( 'QUERY ClosestElement: %d puntos' , size( P ,1) );
       t0 = tic;
+      S = M.ToStruct();
+      if nargout > 4
+        %el 5o output (F.onBoundary) necesita el borde, que es O(nF) sobre la
+        %conectividad: sin esto el wrapper lo recalculaba en CADA llamada (~32 ms
+        %en 87k caras, x80 el resto). Es la CP `boundary`: se sirve cacheada. Solo
+        %se pide cuando hace falta, para no forzar su calculo en el caso comun.
+        S.boundary = M.accessCached( 'boundary' );
+      end
       [ varargout{ 1:max(nargout,1) } ] = ...
-          bvhClosestElement( { M.ToStruct() , M.accessCached( 'bvh' ) } , P , varargin{:} );
+          bvhClosestElement( { S , M.accessCached( 'bvh' ) } , P , varargin{:} );
       M.dbg( 'QUERY ClosestElement resuelta en %.2f ms' , 1e3*toc(t0) );
     end
     function varargout = IntersectRay( M , ray , varargin )
@@ -359,8 +416,9 @@ classdef msh < matlab.mixin.CustomDisplay
       end
       existed = isfield( M.cachePROPS , name );
       M.cachePROPS.( name ) = struct( 'compute' , computeFcn , 'events' , ev );
-      if existed && ~isempty( M.CACHE ) && isvalid( M.CACHE ) && M.CACHE.has( name )
-        M.CACHE = M.CACHE.cloneWithout( name );   %el valor era de OTRA definicion
+      c = M.liveCache();
+      if existed && ~isempty( c ) && c.has( name )
+        M.CACHE = c.cloneWithout( name );         %el valor era de OTRA definicion
       end
       if existed, w = 'redefinida'; else, w = 'definida'; end
       M.dbg( 'DEF   CP ''%s'' %s (eventos: %s)' , name , w , ...
@@ -373,8 +431,9 @@ classdef msh < matlab.mixin.CustomDisplay
         error('msh:cached','no hay CP ''%s''.', name );
       end
       M.cachePROPS = rmfield( M.cachePROPS , name );
-      if ~isempty( M.CACHE ) && isvalid( M.CACHE ) && M.CACHE.has( name )
-        M.CACHE = M.CACHE.cloneWithout( name );
+      c = M.liveCache();
+      if ~isempty( c ) && c.has( name )
+        M.CACHE = c.cloneWithout( name );
       end
       M.dbg( 'DEF   CP ''%s'' eliminada (definicion y valor)' , name );
     end
@@ -401,8 +460,8 @@ classdef msh < matlab.mixin.CustomDisplay
         switch opn
           case 'delete'          %borra el VALOR (handle compartido); statement
             if numel( s ) > 2, error('msh:cached','.delete no admite mas indexacion.'); end
-            c = M.CACHE;
-            if ~isempty( c ) && isvalid( c ), c.remove( name ); end
+            c = M.liveCache();
+            if ~isempty( c ), c.remove( name ); end
             M.dbg( 'CACHE ''%s'' valor borrado (definicion intacta)' , name );
             out = {};
             return;
@@ -415,8 +474,9 @@ classdef msh < matlab.mixin.CustomDisplay
               error('msh:cached','uso: M = M.CP.%s.set( valor ).', name );
             end
             M2 = M;
-            if isempty( M2.CACHE ) || ~isvalid( M2.CACHE ), M2.CACHE = cacheHandle();
-            else,                                             M2.CACHE = M2.CACHE.clone();
+            c  = M2.liveCache();
+            if isempty( c ), M2.CACHE = cacheHandle();
+            else,            M2.CACHE = c.clone();
             end
             M2.CACHE.setFresh( name , s(3).subs{1} );
             M2.dbg( 'CACHE ''%s'' valor sembrado a mano (set)' , name );
@@ -454,13 +514,17 @@ classdef msh < matlab.mixin.CustomDisplay
         fprintf( '  (sin CPs definidas)\n\n' );  return;
       end
       w = max( cellfun( @numel , names ) );
-      c = M.CACHE;
+      c = M.liveCache();
       fprintf( '  CPs (%d) -- leer M.<nombre> | recalcular M.<nombre>_ | control M.CP.<nombre> :\n' , numel( names ) );
       for n = names, n = n{1};
         r = M.cachePROPS.( n );
-        if isempty( c ) || ~isvalid( c ) || ~c.has( n ), st = '(sin calcular)';
-        elseif strcmp( c.state( n ) , 'fresh' ),         st = msh.fmtVal( c.value( n ) );
-        else,                                            st = '(pendiente de replay)';
+        if isempty( c ),                     st = '(sin calcular)';
+        else
+          [ hit , e ] = c.tryGet( n );
+          if ~hit,                           st = '(sin calcular)';
+          elseif strcmp( e.state , 'fresh' ), st = msh.fmtVal( e.value );
+          else,                              st = '(pendiente de replay)';
+          end
         end
         fprintf( '    %-*s  %s\n' , w , n , st );
         ev = fieldnames( r.events ).';
@@ -476,25 +540,59 @@ classdef msh < matlab.mixin.CustomDisplay
   end
 
   methods (Access = private)
+    function M2 = withGeometry( M , S )
+      %reconstruye desde un struct legado CONSERVANDO lo que NO viaja por el
+      %puente ToStruct: VIZ, INFO, DEBUG y el REGISTRO de CPs. Perder un VALOR
+      %cacheado es rendimiento (la geometria cambio entera: cache fresca), pero
+      %perder una DEFINICION es perdida de datos -- la registro el usuario y no
+      %hay forma de recuperarla. Sin esto, Tidy/RemoveFaces/RemoveNodes/Append
+      %devolvian una malla con el registro de fabrica (27 CPs -> 9, en silencio).
+      M2            = msh( S );
+      M2.VIZ        = M.VIZ;              %VIZ no viaja en el struct: copia directa
+      M2.DEBUG      = M.DEBUG;
+      M2.cachePROPS = M.cachePROPS;
+      %INFO: lo que ya trajo el struct MANDA (msh() reinstala INFO.texture, que
+      %puede venir reajustada a la geometria nueva); el resto se conserva
+      inf2 = M2.INFO;
+      for f = fieldnames( M.INFO ).', f = f{1};
+        if ~isfield( inf2 , f ), inf2.( f ) = M.INFO.( f ); end
+      end
+      M2.INFO = inf2;
+    end
+
+    function c = liveCache( obj )
+      %el handle si esta VIVO, cacheHandle.empty si no (array default-
+      %inicializado, objeto a medio deserializar, handle borrado a mano):
+      %centraliza el `isempty(c) || ~isvalid(c)` que se repetia por la clase.
+      %Los llamantes preguntan solo `isempty(c)`.
+      c = obj.CACHE;
+      if ~isempty( c ) && ~isvalid( c ), c = cacheHandle.empty; end
+    end
+
     function v = accessCached( obj , name )
       r = obj.cachePROPS.( name );
-      c = obj.CACHE;
-      if isempty( c ) || ~isvalid( c )            % p.ej. array default-inicializado
+      c = obj.liveCache();
+      if isempty( c )                    %sin handle vivo: computa SIN cachear
         v = r.compute( obj );  return;
       end
-      if c.has( name )
-        if strcmp( c.state( name ) , 'fresh' )
-          obj.dbg( 'HIT   ''%s''' , name );
-          v = c.value( name );
-          return;
-        end
-        v = obj.replayEntry( name , r , c.value( name ) , c.log( name ) );
-        c.setFresh( name , v );      %resolver el pendiente: mutacion compartida benigna
+      [ hit , e ] = c.tryGet( name );    %UN lookup: el HIT es el camino caliente
+      if hit && strcmp( e.state , 'fresh' )
+        obj.dbg( 'HIT   ''%s''' , name );
+        v = e.value;
         return;
       end
-      t0 = tic;
-      v = r.compute( obj );
-      obj.dbg( 'MISS  ''%s'' -> calculado en %.2f ms' , name , 1e3*toc(t0) );
+      %resolver (MISS o pendiente): bajo guarda de ciclos, que cubre tanto el
+      %compute como los handlers del replay (onCleanup libera aunque falle)
+      c.enter( name );
+      done = onCleanup( @() c.leave( name ) );                          %#ok<NASGU>
+      if hit
+        v = obj.replayEntry( name , r , e.value , e.log );
+      else
+        t0 = tic;
+        v = r.compute( obj );
+        obj.dbg( 'MISS  ''%s'' -> calculado en %.2f ms' , name , 1e3*toc(t0) );
+      end
+      %depositar el MISS / resolver el pendiente: mutacion compartida benigna
       c.setFresh( name , v );
     end
 
@@ -504,11 +602,15 @@ classdef msh < matlab.mixin.CustomDisplay
       %handle COMPARTIDO (mutacion benigna: los que comparten CACHE no han
       %divergido -- el COW separa al editar -- asi que el recalculo les vale).
       r = obj.cachePROPS.( name );
+      c = obj.liveCache();
+      if ~isempty( c )
+        c.enter( name );                                   %guarda de ciclos
+        done = onCleanup( @() c.leave( name ) );            %#ok<NASGU>
+      end
       t0 = tic;
       v = r.compute( obj );
       obj.dbg( 'RECMP ''%s'' -> recalculado a la fuerza en %.2f ms' , name , 1e3*toc(t0) );
-      c = obj.CACHE;
-      if ~isempty( c ) && isvalid( c ), c.setFresh( name , v ); end
+      if ~isempty( c ), c.setFresh( name , v ); end
     end
 
     function v = replayEntry( obj , name , r , v0 , L )
@@ -533,8 +635,9 @@ classdef msh < matlab.mixin.CustomDisplay
           obj.dbg( 'RPLAY ''%s'' -> %d transform(s) incremental(es) en %.2f ms' , ...
                    name , numel( L ) , 1e3*toc(t0) );
           return;
-        catch
-          obj.dbg( 'RPLAY ''%s'' -> handler de transform fallo, probando sync absoluto' , name );
+        catch ME
+          obj.dbg( 'RPLAY ''%s'' -> handler de transform fallo (%s), probando sync absoluto' , ...
+                   name , msh.errDesc( ME ) );
         end
       end
       fired = {};
@@ -548,8 +651,8 @@ classdef msh < matlab.mixin.CustomDisplay
             v = r.events.( o{1} )( v0 , obj );
             obj.dbg( 'RPLAY ''%s'' -> sync absoluto via %s en %.2f ms' , name , o{1} , 1e3*toc(t0) );
             return;
-          catch
-            obj.dbg( 'RPLAY ''%s'' -> handler de %s fallo' , name , o{1} );
+          catch ME
+            obj.dbg( 'RPLAY ''%s'' -> handler de %s fallo (%s)' , name , o{1} , msh.errDesc( ME ) );
           end
         end
       end
@@ -559,11 +662,12 @@ classdef msh < matlab.mixin.CustomDisplay
     end
 
     function obj = fireEvents( obj , fired , args )
-      %UN evento de edicion: fired = nombres disparados (especifico->general),
+      %UN evento de edicion: fired = nombres disparados ESPECIFICO->GENERAL
+      %(contrato de los 3 sitios que disparan: set.V, set.F y Transform),
       %args = argumentos del evento semantico (transform: {T}).
       %COW: handle nuevo; cada entrada sobrevive / queda pendiente / cae.
-      cOld = obj.CACHE;
-      if isempty( cOld ) || ~isvalid( cOld )
+      cOld = obj.liveCache();
+      if isempty( cOld )
         obj.CACHE = cacheHandle();
         return;
       end
@@ -573,17 +677,29 @@ classdef msh < matlab.mixin.CustomDisplay
       for k = cOld.keys(), key = k{1};
         if ~isfield( obj.cachePROPS , key ), drop{end+1} = key; continue; end   %#ok<AGROW>
         ev  = obj.cachePROPS.( key ).events;
-        hit = fired( isfield( ev , fired ) );
+        hit = fired( isfield( ev , fired ) );      %conserva el orden de `fired`
         if isempty( hit )                                %insensible: sobrevive
           cNew.setEntry( key , cOld.entry( key ) );
           surv{end+1} = key;                             %#ok<AGROW>
-        elseif any( cellfun( @(e) ~isempty( ev.(e) ) , hit ) )   %handler: pendiente
-          if strcmp( cOld.state( key ) , 'pending' ), L = cOld.log( key ); else, L = {}; end
-          if isempty( L ) || ~isequal( L{end} , edit ), L{end+1} = edit; end
-          cNew.setPending( key , cOld.value( key ) , L );
-          pend{end+1} = key;                             %#ok<AGROW>
-        else                                             %solo [] declarados: cae
+        elseif isempty( ev.( hit{1} ) )
+          %DECIDE EL MAS ESPECIFICO declarado, y [] significa invalidar (tal
+          %como documenta DefineCP): un [] NO lo pisa el handler de un evento
+          %mas general del mismo lote. Para "sin atajo incremental pero sirve
+          %el sync general" no se declara el especifico y basta.
           drop{end+1} = key;                             %#ok<AGROW>
+        else                                             %con handler: pendiente
+          e = cOld.entry( key );                         %una entrada, un lookup
+          if strcmp( e.state , 'pending' ), L = e.log; else, L = {}; end
+          %NO colapsar un edit CON args: 'transform' se aplica de forma
+          %INCREMENTAL y dos T identicas consecutivas son DOS aplicaciones
+          %(colapsarlas dejaba el valor a medio transformar). Los edits
+          %absolutos (sin args) si colapsan: el replay los subsume en un unico
+          %sync contra la malla actual, que ya lo contiene todo.
+          if isempty( L ) || ~isempty( args ) || ~isequal( L{end} , edit )
+            L{end+1} = edit;
+          end
+          cNew.setPending( key , e.value , L );
+          pend{end+1} = key;                             %#ok<AGROW>
         end
       end
       obj.CACHE = cNew;
@@ -662,18 +778,33 @@ classdef msh < matlab.mixin.CustomDisplay
   %% ============================================ DELEGACIONES AL TOOLBOX
   methods
     function M = Tidy( M , varargin )
-      M = msh( MeshTidy( M.ToStruct() , varargin{:} ) );
+      M = M.withGeometry( MeshTidy( M.ToStruct() , varargin{:} ) );
     end
     function M = RemoveFaces( M , idx )
-      M = msh( MeshRemoveFaces( M.ToStruct() , idx ) );
+      M = M.withGeometry( MeshRemoveFaces( M.ToStruct() , idx ) );
     end
     function M = RemoveNodes( M , idx )
-      M = msh( MeshRemoveNodes( M.ToStruct() , idx ) );
+      M = M.withGeometry( MeshRemoveNodes( M.ToStruct() , idx ) );
     end
     function M = Append( M , varargin )
-      others = cellfun( @(x) toS(x) , varargin , 'uni' , 0 );
-      M = msh( MeshAppend( M.ToStruct() , others{:} ) );
-      function s = toS( x ), if isa( x ,'msh'), s = x.ToStruct(); else, s = x; end, end
+      %acepta msh (escalar o ARRAY), struct legado, o celdas de ambos. NO
+      %conserva PARTS: la fusion es destructiva a proposito (MeshAppend sabe
+      %hacerlo con 'keepparts' si algun dia se quiere). Manda el receptor:
+      %VIZ/INFO/DEBUG y el registro de CPs son los de M, no los de los otros.
+      others = {};
+      for a = 1:numel( varargin )
+        x = varargin{a};
+        if iscell( x ), xs = x; else, xs = { x }; end
+        for b = 1:numel( xs )
+          y = xs{b};
+          if isa( y , 'msh' )                     %un array de msh se expande
+            for k = 1:numel( y ), others{end+1} = y(k).ToStruct(); end   %#ok<AGROW>
+          else
+            others{end+1} = y;                                          %#ok<AGROW>
+          end
+        end
+      end
+      M = M.withGeometry( MeshAppend( M.ToStruct() , others{:} ) );
     end
     function h = Plot( M , varargin )
       %precedencia: defaults de plotMESH < M.VIZ < args explicitos
@@ -709,7 +840,7 @@ classdef msh < matlab.mixin.CustomDisplay
     function obj = loadobj( obj )
       %tras load la cache (Transient) esta vacia: reinicializarla. El registro
       %cachePROPS SI se serializa (las definiciones viajan con el valor).
-      if isempty( obj.CACHE ) || ~isvalid( obj.CACHE )
+      if isempty( obj.liveCache() )
         obj.CACHE = cacheHandle();
       end
     end
@@ -890,6 +1021,14 @@ classdef msh < matlab.mixin.CustomDisplay
       if isempty( c ), s = '-'; else, s = strjoin( c , ', ' ); end
     end
 
+    function s = errDesc( ME )
+      %el porque de un handler que falla: sin esto el dbg del replay decia solo
+      %"fallo" y habia que instrumentar a mano para ver el motivo real
+      if isempty( ME.identifier ), s = ME.message;
+      else,                        s = sprintf( '%s: %s' , ME.identifier , ME.message );
+      end
+    end
+
     function s = hDesc( h )
       if isempty( h ), s = 'invalida'; else, s = 'handler'; end
     end
@@ -1006,6 +1145,29 @@ classdef msh < matlab.mixin.CustomDisplay
   % existe (datos + entradas ya presentes en la cache). disp y display
   % comparten esta implementacion (matlab.mixin.CustomDisplay).
   methods (Access = protected)
+    function displayNonScalarObject( objs )
+      %arrays de msh: una linea por malla. El default de CustomDisplay solo
+      %lista NOMBRES de propiedad, que de una malla no dice nada. Concatenar NO
+      %fusiona (eso es Append): un array es un contenedor de mallas.
+      d = strjoin( arrayfun( @(k) sprintf('%d',k) , size( objs ) ,'uni',0) , 'x' );
+      fprintf( '  %s msh array:\n' , d );
+      cap = 10;
+      for i = 1:min( numel( objs ) , cap )
+        o = objs(i);  X = o.VERTICES;  T = o.FACES;
+        if isempty( X ) && isempty( T )
+          fprintf( '    (%d)  empty\n' , i );
+        else
+          fprintf( '    (%d)  %s vertices (%s), %s faces %s\n' , i , ...
+                   msh.thousands( size(X,1) ) , msh.dimStr( X ) , ...
+                   msh.thousands( size(T,1) ) , msh.cellStr( T ) );
+        end
+      end
+      if numel( objs ) > cap
+        fprintf( '    ... y %d mas\n' , numel( objs ) - cap );
+      end
+      fprintf( '\n' );
+    end
+
     function displayScalarObject( obj )
       X = obj.VERTICES;  T = obj.FACES;
       if isempty( X ) && isempty( T )
@@ -1032,11 +1194,11 @@ classdef msh < matlab.mixin.CustomDisplay
         fprintf( '    INFO: %s\n' , msh.kvStr( obj.INFO ) );
       end
       names = fieldnames( obj.cachePROPS ).';
-      c = obj.CACHE;
+      c = obj.liveCache();
       live = {};  none = {};
       for n = names, n = n{1};
-        if ~isempty( c ) && isvalid( c ) && c.has( n ), live{end+1} = n;   %#ok<AGROW>
-        else,                                           none{end+1} = n;   %#ok<AGROW>
+        if ~isempty( c ) && c.has( n ), live{end+1} = n;   %#ok<AGROW>
+        else,                           none{end+1} = n;   %#ok<AGROW>
         end
       end
       if ~isempty( live )
@@ -1044,11 +1206,11 @@ classdef msh < matlab.mixin.CustomDisplay
         w = max( cellfun( @numel , live ) );
         fprintf( '    CPs:\n' );
         for n = live, n = n{1};
-          if strcmp( c.state( n ) , 'fresh' )
-            d = msh.fmtVal( c.value( n ) );
+          en = c.entry( n );
+          if strcmp( en.state , 'fresh' )
+            d = msh.fmtVal( en.value );
           else
-            L = c.log( n );
-            evs = cellfun( @(e) e.fired{1} , L ,'uni',0);
+            evs = cellfun( @(e) e.fired{1} , en.log ,'uni',0);
             d = sprintf( '(pendiente: %s)' , strjoin( evs , ', ' ) );
           end
           fprintf( '      %-*s  %s\n' , w , n , d );

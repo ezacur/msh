@@ -501,6 +501,91 @@ function test_BVH
   assert( max( sqrt(sum((cpi-cp0).^2,2)) ) < 1e-12*sci , 'idempotence: drift accumulated over iterations' );
   fprintf( 'idempotence  ok  (closest(closest(P)) == closest(P): fixed point, no drift)\n' );
 
+  %% 7h) M.boundary PRECALCULADO: el 5o output necesita el borde (MeshBoundary,
+  %%     O(nF)) y lo recalculaba en CADA llamada -- ~x13 del coste total de la
+  %%     llamada en una malla de 87k caras, y en una malla CERRADA se pagaba
+  %%     entero para devolver todo false. Ahora el llamante puede traerlo.
+  Vb = randn( 3000 ,3);  Vb = Vb ./ sqrt( sum( Vb.^2 ,2) );
+  Tb = convhulln( Vb );
+  for openMesh = [ false , true ]
+    Mb = struct( 'xyz' , Vb , 'tri' , Tb );
+    if openMesh, Mb.tri( 1:400 ,:) = []; end        %abre un borde de verdad
+    Bb  = BVH( Mb );
+    bd  = MeshBoundary( Mb.tri );
+    assert( openMesh == ~isempty( bd ) , 'boundary: el caso abierto/cerrado no es el esperado' );
+    Pb  = Mb.xyz( 1:500 ,:) + 0.02*randn(500,3);
+    [ e0,c0,d0,b0,F0 ] = bvhClosestElement( { Mb , Bb } , Pb );          %recalcula
+    Mp = Mb;  Mp.boundary = bd;
+    [ e1,c1,d1,b1,F1 ] = bvhClosestElement( { Mp , Bb } , Pb );          %precalculado
+    assert( isequal(e0,e1) && isequal(c0,c1) && isequal(d0,d1) && isequaln(b0,b1) && ...
+            isequal(F0.type,F1.type) && isequal(F0.onBoundary,F1.onBoundary) , ...
+            'boundary: el borde precalculado debe dar EXACTAMENTE lo mismo' );
+    if openMesh
+      assert( any( F1.onBoundary ) , 'boundary: la malla abierta debe marcar algun onBoundary' );
+    else
+      assert( ~any( F1.onBoundary ) , 'boundary: la cerrada no puede marcar ninguno' );
+    end
+    %un campo con la FORMA equivocada se ignora y se recalcula (no miente)
+    Mx = Mb;  Mx.boundary = [1 2 3];
+    [ ~,~,~,~,Fx ] = bvhClosestElement( { Mx , Bb } , Pb );
+    assert( isequal( Fx.onBoundary , F0.onBoundary ) , ...
+            'boundary: un campo invalido debe ignorarse, no silenciar onBoundary' );
+  end
+  %campo VACIO en una malla CERRADA: es la respuesta, no debe recalcular
+  Mz = struct( 'xyz' , Vb , 'tri' , Tb , 'boundary' , [] );
+  [ ~,~,~,~,Fz ] = bvhClosestElement( { Mz , BVH(Mz) } , Vb(1:100,:)*1.02 );
+  assert( ~any( Fz.onBoundary ) , 'boundary: campo vacio == sin borde' );
+  fprintf( 'boundary     ok  (precalculado == recalculado; invalido se ignora)\n' );
+
+  %% 7i) INVARIANTES de bc endurecidos: la suma es 1 BIT-EXACTA, no "1 +- 1 ulp".
+  %%     finalizeBC normaliza DIVIDIENDO (un redondeo, no dos), se salta la
+  %%     normalizacion cuando ya suma 1 (deja los vertices/aristas bit-exactos) y
+  %%     empuja el residuo a la componente MAYOR midiendo contra el sumatorio en
+  %%     el MISMO orden que usa el llamante. Antes: 141/143 exactas, 1.0 ulp.
+  Vi = randn( 4000 ,3);  Vi = Vi ./ sqrt( sum( Vi.^2 ,2) );
+  Mi9 = struct( 'xyz' , Vi , 'tri' , convhulln( Vi ) );
+  Pi9 = [ Vi( 1:800 ,:) * 1.001 ; Vi( 801:1600 ,:) * 0.7 ; randn( 800 ,3)*2 ];
+  [ e9 , cp9 , ~ , bc9 ] = bvhClosestElement( Mi9 , Pi9 );
+  assert( all( sum( bc9 ,2) == 1 ) , ...
+          'bc: la suma debe ser 1 BIT-exacta en superficies de triangulos' );
+  assert( all( bc9(:) >= 0 & bc9(:) <= 1 ) , 'bc: fuera de [0,1]' );
+  T9   = Mi9.tri( e9 ,:);
+  rec9 = bc9(:,1).*Mi9.xyz(T9(:,1),:) + bc9(:,2).*Mi9.xyz(T9(:,2),:) ...
+       + bc9(:,3).*Mi9.xyz(T9(:,3),:) - cp9;
+  assert( max( sqrt( sum( rec9.^2 ,2) ) ) < 1e-13 , 'bc: la reconstruccion se degrado' );
+  %la misma exigencia sobre la matriz de casos degenerados (rotados y lejos)
+  Rd = [0.6 -0.8 0;0.8 0.6 0;0 0 1];  shd = [137.5 -88.25 41.125];
+  DEG = { [0 0 0;1 0 0;0.5 sqrt(3)/2 0] , [0 0 0;1 0 0;0.5 1e-4 0] , ...
+          [0 0 0;1 0 0;0.5 1e-12 0]     , 1e-8*[0 0 0;1 0 0;0.5 0.86 0] , ...
+          1e6*[0 0 0;1 0 0;0.5 0.86 0]  , [0 0 0;1 0 0;1 0 0] , ...
+          [0 0 0;0 0 0;0 0 0] };
+  for id = 1:numel( DEG )
+    Vd = ( DEG{id} * Rd.' ) + shd;
+    Md = struct( 'xyz' , Vd , 'tri' , [1 2 3] );
+    hd = max( max(abs(Vd(:))) , 1 );
+    Pd9 = [ Vd ; mean(Vd,1) ; (Vd(1,:)+Vd(2,:))/2 ; mean(Vd,1) + 1e-3*hd*[0.3 -0.7 0.6] ; ...
+            Vd(1,:) + 0.6*( Vd(1,:)-Vd(2,:) ) ];
+    [ ~ , ~ , ~ , bd ] = bvhClosestElement( Md , Pd9 );
+    assert( all( sum( bd ,2) == 1 ) , ...
+            'bc: suma no bit-exacta en el caso degenerado %d' , id );
+    assert( all( bd(:) >= 0 & bd(:) <= 1 ) , 'bc: fuera de [0,1] en degenerado %d' , id );
+  end
+  %extremos de SEGMENTO (celltype 3) EXACTOS: el clamp copia el vertice en vez
+  %de interpolar. Con cp = a+t*(b-a) y t==1 salia fl(a+fl(b-a)) != b, y la bc de
+  %ese caso es [0,1], que reconstruye b exacto -> cp y bc*V discrepaban 1 ulp.
+  for Ls = [ 1e-9 , 1 , 1e6 ]
+    Vs = ( [0 0 0; Ls 0 0] * Rd.' ) + shd;
+    Ms = struct( 'xyz' , Vs , 'tri' , [1 2] );
+    us = Vs(2,:) - Vs(1,:);
+    if norm( us ) > 0, us = us / norm( us ); else, us = [1 0 0]; end
+    Ps = [ Vs(1,:) - 3*us ; Vs(2,:) + 3*us ];          %mas alla de cada extremo
+    [ ~ , cps , ~ , bcs ] = bvhClosestElement( Ms , Ps );
+    assert( isequal( cps(1,:) , Vs(1,:) ) , 'd2Seg: el extremo A debe salir EXACTO (L=%g)' , Ls );
+    assert( isequal( cps(2,:) , Vs(2,:) ) , 'd2Seg: el extremo B debe salir EXACTO (L=%g)' , Ls );
+    assert( isequal( bcs , [1 0;0 1] ) , 'd2Seg: la bc de los extremos debe ser exacta (L=%g)' , Ls );
+  end
+  fprintf( 'bc invariantes ok  (suma == 1 BIT-exacta, [0,1], reconstruccion ~eps, extremos exactos)\n' );
+
   %% 8) timing (all through the MEX; threads follow maxNumCompThreads)
   V = randn( 26000 ,3);  V = V ./ sqrt( sum( V.^2 ,2) );
   M = struct( 'xyz' , V , 'tri' , convhulln( V ) );

@@ -197,6 +197,13 @@ Y cada CP declara, para cada evento, una de tres reacciones:
 * **declarado con un handler** → el valor queda **pendiente**: el handler lo
   actualizará *barato* en el próximo acceso (§4).
 
+Cuando una edición dispara **varios** eventos, decide el **más específico que
+la CP declare** — y su `[]` es firme: no lo pisa el handler de un evento más
+general del mismo lote. Así, una CP con `changeNodeCount → []` cae al cambiar
+el número de nodos aunque también declare `changeCoords → handler`. Para
+expresar "no tengo atajo para este evento, pero el sync general me sirve",
+simplemente **no declares** el específico.
+
 El ejemplo canónico es el `bvh` de fábrica, que es pura declaración:
 
 ```matlab
@@ -232,6 +239,9 @@ Reglas del replay:
 
 * `transform` es **incremental**: su handler recibe cada `T` del log
   (`@(v,m,T)`) y se aplican en secuencia — dos transforms = dos pliegues O(1).
+  Esto incluye dos `T` **idénticas**: son dos aplicaciones, no una, así que el
+  log nunca colapsa edits que lleven `args` (solo los absolutos, que sí son
+  idempotentes). Colapsarlos dejaba el valor a medio transformar.
 * Los demás eventos son **absolutos**: su handler recibe la malla *actual*
   (`@(v,m)`) que ya contiene todo lo ocurrido — así N deformaciones colapsan
   en un solo sync, y un log mixto (transform + edición ciega) lo subsume un
@@ -556,13 +566,36 @@ fuera de la clase, se borra de `MESH\` y su vida sigue solo en `private`. Los
 alias de lectura `M.xyz`/`M.tri` (§2) ayudan en el mientras tanto: una legada
 de solo lectura acepta un `msh` directamente.
 
-Delegaciones ya envueltas (devuelven un `msh` nuevo, con cache fresca):
+Delegaciones ya envueltas. Devuelven un `msh` nuevo con la **cache fresca** (la
+geometría cambió entera) pero **conservando** `VIZ`, `INFO`, `DEBUG` y tu
+**registro de CPs** — perder un valor cacheado es rendimiento, perder una
+definición que registraste a mano sería pérdida de datos:
 
 ```matlab
 M = M.Tidy( … );                 % MeshTidy
 M = M.RemoveFaces( idx );        % MeshRemoveFaces
 M = M.RemoveNodes( idx );        % MeshRemoveNodes (remapea caras y atributos)
-M = M.Append( M2 , S3 , … );     % MeshAppend (acepta msh y structs mezclados)
+M = M.Append( M2 , S3 , … );     % MeshAppend (msh escalar o ARRAY, structs y
+                                 % celdas mezclados; manda el receptor)
+```
+
+`Append` **no** conserva PARTS: la fusión es destructiva a propósito (quien
+quiera trazabilidad puede pedírsela a `MeshAppend` con `'keepparts'`).
+
+### Arrays de mallas
+
+`msh` es clase de valor, así que `[M1 M2]`, `A(i)=M`, `repmat` y `M([1 1 1])`
+construyen **arrays**. Concatenar **no fusiona** — para eso está `Append`,
+explícito. Las CPs resuelven sobre los elementos:
+
+```matlab
+A = [ M1 , M2 ];        % array 1x2 (NO una malla fusionada)
+A(2).bvh                % la CP resuelve en el elemento
+A(2).bvh_               % y el recálculo forzado
+[ n1 , n2 ] = A.nV;     % lista separada por comas, como un struct array
+{ A.nV }                % expande en celda
+x = A.nV                % ERROR msh:csList — 2 mallas dan 2 resultados
+M = A(1).Append( A(2:end) );    % fusionar el array entero
 ```
 
 ---
@@ -649,14 +682,17 @@ M =
   mapas de índices que ya devuelven `MeshTidy`/`MeshRemove*` — permitirían
   updates quirúrgicos de las adyacencias (borrar filas de `esup` en vez de
   recomputarla).
-* Las delegaciones (`Tidy`, `Append`, …) devuelven un `msh` con cache fresca
-  y **registro de fábrica** (no heredan tus `DefineCP`).
-* El acceso a CPs paga un pequeño peaje de `subsref` (µs); los métodos
-  y propiedades reales no se interceptan en la práctica.
+* Las delegaciones (`Tidy`, `Append`, …) devuelven un `msh` con la cache fresca,
+  pero **sí** heredan `VIZ`/`INFO`/`DEBUG` y tu registro de `DefineCP` (§14).
+* El acceso a CPs paga un peaje de `subsref` (~18 µs por lectura en HIT, del que
+  la cache es ~1,5: **domina el dispatch**, no el almacén). Y como `subsref`
+  está sobrecargado, *todo* acceso con punto recorre la cadena de comprobaciones
+  de CP antes de caer a `builtin`, no solo las CPs.
 * Las formas funcionales no despachan a la clase (§2): `plot(M)` /
   `transform(M,T)` caen al path — usa `M.Plot()` / `M.Transform(T)`.
 * Los `.mat` guardados con el API anterior cargan sus datos, pero el registro
   serializado trae los nombres/handlers viejos (`BVH`, `toStruct`) — para
   mallas antiguas: reconstruye con `M = msh( struct viejo )`.
-* No hay aritmética de mallas sobrecargada (`M1 + M2`…): usa `Append`.
+* No hay aritmética de mallas sobrecargada (`M1 + M2`…) **ni concatenación
+  fusionante**: `[M1 M2]` es un array de 2 mallas (§14), fusionar es `Append`.
 ```
