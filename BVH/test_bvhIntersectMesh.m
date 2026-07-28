@@ -101,19 +101,29 @@ function test_bvhIntersectMesh
     fprintf( '  (bvhTriPairs_mx sin compilar: recorrido no validado)\n' );
   end
 
-  %% 10) AUTOINTERSECCION. Una esfera cerrada NO se autocorta: curva vacia. Sin
-  %%     excluir el par identico y la adyacencia devolvia su red de aristas entera
-  %%     (134 de 162 nodos con grado >2).
-  C10 = bvhIntersectMesh( S1 , S1 );
+  %% 10) AUTOINTERSECCION con UN argumento (la forma preferible: dice la intencion
+  %%     en vez de dejarla deducir). Una esfera cerrada NO se autocorta: curva
+  %%     vacia. Sin excluir el par identico y la adyacencia devolvia su red de
+  %%     aristas entera (134 de 162 nodos con grado >2).
+  C10 = bvhIntersectMesh( S1 );
   assert( isempty( C10.tri ) , ...
           '10) una esfera cerrada no se autocorta: %d segmento(s) de mas' , size(C10.tri,1) );
+  %%     y la forma de dos argumentos identicos debe dar lo MISMO
+  C10b = bvhIntersectMesh( S1 , S1 );
+  assert( isequal( C10.xyz , C10b.xyz ) && isequal( C10.tri , C10b.tri ) , ...
+          '10) f(A) y f(A,A) deben coincidir' );
 
   %%     y una malla que SI se autocorta: las dos esferas de arriba unidas en UNA.
   %%     Su autointerseccion tiene que ser exactamente el mismo circulo del caso 1.
   U = struct( 'xyz' , [ S1.xyz ; S2.xyz ] , ...
               'tri' , [ S1.tri ; S2.tri + size(S1.xyz,1) ] );
-  C11 = bvhIntersectMesh( U , U );
+  C11 = bvhIntersectMesh( U );
   chk( C11 , '10) autointerseccion de la union' , 0 , 1 );
+  %%     el bundle {M,B} SI se aprovecha en autointerseccion: el arbol es el de M
+  Bu  = BVH( struct('xyz',U.xyz,'tri',U.tri) );
+  C11b = bvhIntersectMesh( {U,Bu} );
+  assert( isequal( C11.xyz , C11b.xyz ) && isequal( C11.tri , C11b.tri ) , ...
+          '10) autointerseccion con blob cacheado debe dar la misma curva' );
   assert( size(C11.tri,1) == size(C.tri,1) , ...
           '10) la autointerseccion deberia dar el mismo circulo: %d vs %d segmentos' , ...
           size(C11.tri,1) , size(C.tri,1) );
