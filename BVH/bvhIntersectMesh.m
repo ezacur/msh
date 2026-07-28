@@ -1,7 +1,8 @@
 function [ C , K , PR ] = bvhIntersectMesh( MA , MB )
-%bvhIntersectMesh  Curva de interseccion de dos superficies trianguladas.
+%bvhIntersectMesh  Curva de interseccion de dos superficies, o AUTOINTERSECCION.
 %
-%   [ C , K , PR ] = bvhIntersectMesh( MA , MB )
+%   [ C , K , PR ] = bvhIntersectMesh( MA , MB )    corte de MA contra MB
+%   [ C , K , PR ] = bvhIntersectMesh( MA )         AUTOINTERSECCION de MA
 %
 %   Devuelve la curva donde las superficies MA y MB se cortan, como una malla de
 %   SEGMENTOS (celltype 3 = VTK_LINE, 2 nodos por celda):
@@ -36,39 +37,47 @@ function [ C , K , PR ] = bvhIntersectMesh( MA , MB )
 %   mismo segmento hallado por los dos triangulos que comparten una arista, y
 %   cancelarlo borraria curva de verdad.
 %
-%   BLOB REUTILIZABLE. Cualquiera de los dos argumentos admite el bundle {M,B}.
-%   El que se aprovecha es el del SEGUNDO: el recorrido desciende el arbol de MB
-%   con los triangulos de MA, asi que un blob en el primero no tiene donde
-%   emplearse y se ignora. El de MB se usa si sirve (mismo tamano, mismo frame y
-%   cage 'aabb'); si no, se reconstruye. Construirlo es lo mas caro de la llamada
-%   -- 67 de 90 ms en una malla de 87k caras -- asi que pasarlo hecho compensa
-%   cuando se cortan varias mallas contra la misma.
-%
-%   AUTOINTERSECCION. Si las dos mallas son BIT-IDENTICAS se cambia de pregunta:
-%   se buscan pares de triangulos NO ADYACENTES que se corten. Un triangulo corta
+%   AUTOINTERSECCION. Con UN solo argumento se busca donde MA se corta consigo
+%   misma: pares de triangulos NO ADYACENTES que se cruzan. Un triangulo corta
 %   trivialmente consigo mismo y con quien comparte arista o vertice, y eso no es
 %   un autocorte -- sin excluirlo, una esfera cerrada devolvia su red de aristas
-%   entera (medido: 134 de 162 nodos con grado >2 en vez de curva vacia). La
-%   deteccion es por igualdad EXACTA, no por semejanza: si MB es MA deformada, los
-%   ids de vertice viven en el mismo espacio pero las superficies son distintas y
-%   excluir vecinos falsearia el resultado.
+%   entera (medido: 134 de 162 nodos con grado >2 en vez de curva vacia).
+%   La forma de dos argumentos con las dos mallas BIT-IDENTICAS hace lo mismo, por
+%   si el llamante ya tenia el codigo escrito asi; la de un argumento es la
+%   preferible, porque dice la intencion en vez de dejarla deducir. Ojo con la
+%   diferencia: si MB es MA DEFORMADA comparte la numeracion de vertices pero es
+%   otra superficie, asi que NO es autointerseccion y los vecinos no se excluyen.
+%
+%   BLOB REUTILIZABLE. Los argumentos admiten el bundle {M,B}. El que se
+%   aprovecha es el de la malla cuyo ARBOL se recorre:
+%     - dos mallas    -> el de MB (se desciende el arbol de MB con los
+%                        triangulos de MA), y un blob en MA no tiene donde
+%                        emplearse: se ignora;
+%     - autointerseccion -> el de MA, que es el unico que hay.
+%   Se usa si sirve (mismo tamano, mismo frame y cage 'aabb'); si no, se
+%   reconstruye. Construirlo es lo mas caro de la llamada -- 67 de 90 ms en una
+%   malla de 87k caras -- asi que pasarlo hecho compensa.
 %
 %   Requiere triTriPairs_mx compilado (mex triTriPairs_mx.cpp).
 %
 % See also MeshZeroContour, bvhClosestElement, bvhIntersectRay, BVH.
 
-  [ MA , BA ] = asMesh( MA , 'MA' );                              %#ok<ASGLU>
-  [ MB , BB ] = asMesh( MB , 'MB' );
+  [ MA , BA ] = asMesh( MA , 'MA' );
   C  = struct( 'xyz' , zeros(0,3) , 'tri' , zeros(0,2) , 'celltype' , 3 );
   K  = zeros(0,8);  PR = zeros(0,2);
-  if isempty( MA.tri ) || isempty( MB.tri ), return; end
 
-  %AUTOINTERSECCION: si las dos mallas son BIT-IDENTICAS, la pregunta es otra --
-  %un triangulo corta trivialmente consigo mismo y con sus vecinos por la arista o
-  %el vertice compartidos, y eso no es un autocorte. Se detecta por igualdad exacta
-  %(no por "parecidas"): si B es A deformada, los ids de vertice viven en el mismo
-  %espacio pero las superficies son distintas, y excluir vecinos seria un error.
-  selfMode = isequal( MA.xyz , MB.xyz ) && isequal( MA.tri , MB.tri );
+  if nargin < 2                                  %UN argumento: autointerseccion
+    selfMode = true;
+    MB = MA;  BB = BA;                           %aqui el blob de MA SI sirve:
+  else                                           %el arbol que se recorre es el suyo
+    [ MB , BB ] = asMesh( MB , 'MB' );
+    %la forma de dos argumentos con las dos mallas BIT-IDENTICAS hace lo mismo.
+    %Por igualdad EXACTA, no por semejanza: si MB es MA deformada, los ids de
+    %vertice viven en el mismo espacio pero las superficies son distintas, y
+    %excluir vecinos falsearia el resultado.
+    selfMode = isequal( MA.xyz , MB.xyz ) && isequal( MA.tri , MB.tri );
+  end
+  if isempty( MA.tri ) || isempty( MB.tri ), return; end
 
   P = candidatePairs( MA , MB , BB );
   if selfMode && ~isempty( P )
