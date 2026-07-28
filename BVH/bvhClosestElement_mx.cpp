@@ -119,6 +119,7 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
     return f;
   };
   const mxArray *fB4 = fld("bounds4"), *fC4 = fld("child4"), *fR4 = fld("srange");
+  const mxArray *fN4 = fld("node4");        /* pool fundido, prearmado en BVH.m */
   const mxArray *fkV = fld("pkV"), *fkS = fld("pkS"), *fkT = fld("pkT"), *fkE = fld("pkE");
   const mxArray *fP4 = fld("pk4"), *fPI = fld("pk4id"), *fS4 = fld("s4");
   const mxArray *fV  = fld("vol");
@@ -152,34 +153,51 @@ void mexFunction( int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[] )
   if( mxGetM(fP4) != 36 || mxGetM(fPI) != 4 || mxGetN(fPI) != nB ||
       mxGetM(fS4) != 8 || mxGetN(fS4) != nN )
     mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "inconsistent PreTri4 pool (rebuild with BVH)." );
-  for( mwSize i = 0; i < 4*nB; ++i )
-    if( PKI[i] < 0 || PKI[i] > (int32_t)nE )
-      mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 lane id." );
+  /* ---- index sanity: MUESTREO acotado, no barrido completo ----
+   * Estos indices los produce el propio builder y BVH.m los valida ENTEROS (de
+   * forma vectorizada) una vez al construir y al refitear. Barrerlos aqui
+   * recorria 4*nB + 4*nN entradas en CADA llamada -- 277 000 comprobaciones de
+   * rango y ~78 us en una malla de 87k caras, mas que la consulta misma en lotes
+   * pequenos -- para revalidar un blob que es INMUTABLE.
+   * Un muestreo acotado sigue pillando el error que de verdad ocurre (otro array
+   * enchufado por equivocacion, un blob a medio construir) a coste O(1), y es la
+   * misma politica que ya usa el wrapper para la staleness (4 vertices de 43k).
+   * La garantia fuerte vive en BVH.m: checkBlobIndices. */
+  {
+    const mwSize nPK = 4*nB;
+    const mwSize sPK = ( nPK > 512 ) ? nPK/512 : 1;
+    for( mwSize i = 0; i < nPK; i += sPK )
+      if( PKI[i] < 0 || PKI[i] > (int32_t)nE )
+        mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 lane id." );
 
-  for( mwSize i = 0; i < nN; ++i )                       /* bounds-check      */
-    for( int k = 0; k < 4; ++k ) {
-      const int32_t c = Wc[ i*4 + k ];
-      if( c < -1 || c > (int32_t)nN )
-        mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt child index." );
-      if( c != 0 ) {
-        const int32_t lo = Wr[ i*8 + 2*k ], hi = Wr[ i*8 + 2*k + 1 ];
-        if( lo < 1 || hi < lo || hi > (int32_t)nE )
-          mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt slot range." );
-        const int32_t s0 = Ws4[ i*8 + 2*k ], sn = Ws4[ i*8 + 2*k + 1 ];
-        if( sn < 0 || ( sn > 0 && ( s0 < 1 || (mwSize)( s0 + sn - 1 ) > nB ) ) )
-          mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 slot range." );
+    const mwSize sN = ( nN > 128 ) ? nN/128 : 1;
+    for( mwSize i = 0; i < nN; i += sN )
+      for( int k = 0; k < 4; ++k ) {
+        const int32_t c = Wc[ i*4 + k ];
+        if( c < -1 || c > (int32_t)nN )
+          mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt child index." );
+        if( c != 0 ) {
+          const int32_t lo = Wr[ i*8 + 2*k ], hi = Wr[ i*8 + 2*k + 1 ];
+          if( lo < 1 || hi < lo || hi > (int32_t)nE )
+            mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt slot range." );
+          const int32_t s0 = Ws4[ i*8 + 2*k ], sn = Ws4[ i*8 + 2*k + 1 ];
+          if( sn < 0 || ( sn > 0 && ( s0 < 1 || (mwSize)( s0 + sn - 1 ) > nB ) ) )
+            mexErrMsgIdAndTxt( "bvhClosestElement_mx:B", "corrupt PreTri4 slot range." );
+        }
       }
-    }
-
-  /* ---- fused per-call node pool: bounds + children CONTIGUOUS (one memory
-   *      street per visit instead of two far-apart column reads) ---- */
-  const size_t stride = (size_t)S*4 + 16;
-  std::vector<char> fused( stride * nN );
-  for( mwSize i = 0; i < nN; ++i ) {
-    memcpy( &fused[ i*stride ], W4 + (size_t)i*S, (size_t)S*4 );
-    memcpy( &fused[ i*stride + (size_t)S*4 ], Wc + (size_t)i*4, 16 );
   }
-  const char* FZ = fused.data();
+
+  /* ---- fused node pool: bounds + children CONTIGUOUS (one memory street per
+   *      visit instead of two far-apart column reads). Built ONCE by BVH.m into
+   *      B.node4 -- it used to be rebuilt on EVERY call (O(nN) memcpy, ~10 ns
+   *      per node: 110 us on 87k faces, 580 us on 200k) and thrown away on
+   *      return, which dominated small batches. Zero-copy pointer now. ---- */
+  const size_t stride = mxGetNumberOfElements( fN4 ) / (size_t)nN;
+  if( !mxIsUint8( fN4 ) || stride * (size_t)nN != mxGetNumberOfElements( fN4 ) ||
+      stride < (size_t)S*4 + 16 )
+    mexErrMsgIdAndTxt( "bvhClosestElement_mx:B",
+                       "bad node4 pool (rebuild with BVH)." );
+  const char* FZ = (const char*)mxGetData( fN4 );
 
   /* ---- outputs ---- */
   const bool wantBC = ( nlhs > 3 );      /* region-exact barycentrics on demand */
