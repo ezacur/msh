@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($sp = \"C:\\\\Users\\\\ErnestoCorify\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--repos-msh\\\\ff4d32d6-230b-4f6f-8d2c-c4029488073a\\\\scratchpad\"; matlab -singleCompThread -batch \"addpath\\('$sp'\\); try, test_degenerate; catch ME, fprintf\\(2,'FAILED: %s / %s\\\\n',ME.identifier,ME.message\\); for k=1:numel\\(ME.stack\\), fprintf\\(2,'  at %s:%d\\\\n',ME.stack\\(k\\).name,ME.stack\\(k\\).line\\); end, end; exit\" 2>&1 | Select-String -Pattern \"CASO|puntos|oraculo|bvh|vtk|falla|->|HECHO|FAILED|at |\\\\[\" | Out-String)",
+      "PowerShell(matlab *)"
+    ]
+  }
+}
