@@ -1,0 +1,92 @@
+
+==========================================================================
+ 0) S = serie().Safe()   -- registro CONSERVADOR: todo se invalida
+  CPs (3) -- leer S.<n> | recalcular S.<n>_ | control S.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     (sin calcular)                     eventos: changedata->invalida
+    sorted  (sin calcular)                     eventos: changedata->invalida
+    top     (sin calcular)                     eventos: changedata->invalida
+
+
+==========================================================================
+ 1) S = S.Push(4); S = S.Push(8)   -- editar NO calcula nada
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+
+==========================================================================
+ 2) S.avg   -- primera lectura: MISS, se calcula y se guarda
+  [serie] MISS  "avg" -> calculado
+  avg = 6
+
+==========================================================================
+ 3) S.avg   -- segunda lectura: HIT, no se recalcula
+  [serie] HIT   "avg"
+  avg = 6
+
+==========================================================================
+ 4) S = S.Push(6)   -- una edicion tira TODO lo cacheado
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {avg} | sobreviven {-}
+  CPs (3) -- leer S.<n> | recalcular S.<n>_ | control S.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     (sin calcular)                     eventos: changedata->invalida
+    sorted  (sin calcular)                     eventos: changedata->invalida
+    top     (sin calcular)                     eventos: changedata->invalida
+
+
+==========================================================================
+ 5) F = serie().Fast()   -- mismos derivados, politicas distintas
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+  [serie] MISS  "avg" -> calculado
+  [serie] MISS  "top" -> calculado
+  avg = 6 , top = 8
+  CPs (3) -- leer S.<n> | recalcular S.<n>_ | control S.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     fresh: 6                           eventos: push->incremental, pop->sync
+    sorted  (sin calcular)                     eventos: changedata->invalida
+    top     fresh: 8                           eventos: push->incremental, pop->invalida
+
+
+==========================================================================
+ 6) F = F.Push(6)   -- avg y top quedan PENDIENTES; sorted cae
+  [serie] EVENT {push+changedata}: pendientes {avg, top} | caen {-} | sobreviven {-}
+  CPs (3) -- leer S.<n> | recalcular S.<n>_ | control S.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     (pendiente: 1 edit(s) en el log)   eventos: push->incremental, pop->sync
+    sorted  (sin calcular)                     eventos: changedata->invalida
+    top     (pendiente: 1 edit(s) en el log)   eventos: push->incremental, pop->invalida
+
+
+==========================================================================
+ 7) F.avg   -- replay INCREMENTAL: se pone al dia sin recorrer la lista
+  [serie] RPLAY "avg" -> 1 incremental(es) sobre el valor viejo
+  avg = 6   (verdad: 6)
+
+==========================================================================
+ 8) F = F.Pop()   -- al quitar: avg se SINCRONIZA, top se INVALIDA
+  [serie] EVENT {pop+changedata}: pendientes {avg} | caen {top} | sobreviven {-}
+  CPs (3) -- leer S.<n> | recalcular S.<n>_ | control S.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     (pendiente: 1 edit(s) en el log)   eventos: push->incremental, pop->sync
+    sorted  (sin calcular)                     eventos: changedata->invalida
+    top     (sin calcular)                     eventos: push->incremental, pop->invalida
+
+  [serie] RPLAY "avg" -> sync absoluto via pop
+  [serie] MISS  "top" -> calculado
+  avg = 6 , top = 8
+
+==========================================================================
+ 9) VerifyCPs( F )   -- comparar lo que sirve la cache con la verdad
+  VerifyCPs de serie: 2 CP(s) con valor, 0 discrepa(n)
+    avg  fresh     OK
+    top  fresh     OK
+
+
+==========================================================================
+10) un handler MAL escrito, y como se caza
+  la cache sirve 8, la verdad es 6 -- y no falla ni avisa nadie
+  VerifyCPs de serie: 1 CP(s) con valor, 1 discrepa(n)
+  ! malo  fresh     sirve 8 | verdad 6
+  Una discrepancia = la cache sirve algo distinto de lo que da su compute:
+  o un handler MIENTE, o a esa CP le falta declarar el evento que la afecta.
+

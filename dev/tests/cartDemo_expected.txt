@@ -1,0 +1,123 @@
+
+----------------------------------------------------------------------------
+== PASO 0. C = cart().Demo()   -- registra 4 definiciones; la cache queda VACIA
+  [cart] DEF   "total" (eventos: additem, changeprice)
+  [cart] DEF   "ticket" (eventos: additem)
+  [cart] DEF   "topPrice" (eventos: changedata)
+  [cart] DEF   "currency" (eventos: -)
+  CPs (4) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    currency  (sin calcular)                     eventos: (ninguno: solo MISS/HIT)
+    ticket    (sin calcular)                     eventos: additem->invalida
+    topPrice  (sin calcular)                     eventos: changedata->sync
+    total     (sin calcular)                     eventos: additem->incremental, changeprice->sync
+
+
+----------------------------------------------------------------------------
+== PASO 1. C = C.Add('cafe',3,2)   -- evento con la cache vacia: nada que hacer
+  [cart] EVENT {additem+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+
+----------------------------------------------------------------------------
+== PASO 2. leer las 4 CPs   -- MISS: computa y deposita en el store
+  [cart] MISS  "total" -> calculado
+  [cart] MISS  "ticket" -> calculado
+  [cart] MISS  "topPrice" -> calculado
+  [cart] MISS  "currency" -> calculado
+  total=6  ticket='cafe'  topPrice=3  currency='EUR'
+
+----------------------------------------------------------------------------
+== PASO 3. C.total otra vez   -- HIT (no computa nada)
+  [cart] HIT   "total"
+  total=6
+  CPs (4) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    currency  fresh: 'EUR'                       eventos: (ninguno: solo MISS/HIT)
+    ticket    fresh: 'cafe'                      eventos: additem->invalida
+    topPrice  fresh: 3                           eventos: changedata->sync
+    total     fresh: 6                           eventos: additem->incremental, changeprice->sync
+
+
+----------------------------------------------------------------------------
+== PASO 4. D = C   -- la COPIA comparte el MISMO cacheHandle
+
+----------------------------------------------------------------------------
+== PASO 5. C = C.Add('pan',1,1)   -- COW: handle NUEVO para C; D no se entera
+  [cart] EVENT {additem+changedata}: pendientes {total, topPrice} | caen {ticket} | sobreviven {currency}
+  CPs (4) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    currency  fresh: 'EUR'                       eventos: (ninguno: solo MISS/HIT)
+    ticket    (sin calcular)                     eventos: additem->invalida
+    topPrice  (pendiente: 1 edit(s) en el log)   eventos: changedata->sync
+    total     (pendiente: 1 edit(s) en el log)   eventos: additem->incremental, changeprice->sync
+
+
+----------------------------------------------------------------------------
+== PASO 6. C.total -> REPLAY incremental (6+1=7).  D.total -> HIT del viejo (6)
+  [cart] RPLAY "total" -> 1 incremental(es) sobre el valor viejo
+  C.total=7
+  [cart] HIT   "total"
+  D.total=6
+
+----------------------------------------------------------------------------
+== PASO 7. C.ticket   -- cayo con el additem ([] = invalidar), asi que MISS
+  [cart] MISS  "ticket" -> calculado
+  ticket='cafe + pan'
+
+----------------------------------------------------------------------------
+== PASO 8. C = C.SetPrice('cafe',4)   -- ticket SOBREVIVE (no declara el evento)
+  [cart] EVENT {changeprice+changedata}: pendientes {total, topPrice} | caen {-} | sobreviven {currency, ticket}
+  CPs (4) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    currency  fresh: 'EUR'                       eventos: (ninguno: solo MISS/HIT)
+    ticket    fresh: 'cafe + pan'                eventos: additem->invalida
+    topPrice  (pendiente: 1 edit(s) en el log)   eventos: changedata->sync
+    total     (pendiente: 1 edit(s) en el log)   eventos: additem->incremental, changeprice->sync
+
+
+----------------------------------------------------------------------------
+== PASO 9. C.total   -- el log no es todo-incremental: cascada a SYNC ABSOLUTO
+  [cart] RPLAY "total" -> sync absoluto via changeprice
+  total=9
+
+----------------------------------------------------------------------------
+== PASO 10. C.topPrice   -- 2 edits fundidos en UN marcador: un solo sync absoluto
+  [cart] RPLAY "topPrice" -> sync absoluto via changedata
+  topPrice=4
+
+----------------------------------------------------------------------------
+== PASO 11. C.total_   -- recalculo FORZADO (descarta valor y log)
+  [cart] RECMP "total" -> recalculado a la fuerza
+  total=9
+
+----------------------------------------------------------------------------
+== PASO 12. C.CP.total.delete   -- borra el VALOR (la definicion queda)
+  [cart] CACHE "total" valor borrado (definicion intacta)
+  CPs (4) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    currency  fresh: 'EUR'                       eventos: (ninguno: solo MISS/HIT)
+    ticket    fresh: 'cafe + pan'                eventos: additem->invalida
+    topPrice  fresh: 4                           eventos: changedata->sync
+    total     (sin calcular)                     eventos: additem->incremental, changeprice->sync
+
+
+----------------------------------------------------------------------------
+== PASO 13. C = C.CP.total.set( 999 )   -- siembra a mano: NADIE lo verifica
+  [cart] CACHE "total" valor sembrado a mano
+  [cart] HIT   "total"
+  total=999   <-- mentira consentida
+
+----------------------------------------------------------------------------
+== PASO 14. h = C.CP.total.additem   -- el handler declarado, tal cual
+  @(v,~,d)v+d
+
+----------------------------------------------------------------------------
+== PASO 15. P = C.CP   -- el proxy en una VARIABLE: la cadena rota sigue valiendo
+  [cart] HIT   "ticket"
+  class(P)=cacheProxy   P.ticket='cafe + pan'
+
+----------------------------------------------------------------------------
+== PASO 16. guarda de ciclos: una CP que se pide a si misma
+  [cart] DEF   "bucle" (eventos: -)
+  ERROR ATRAPADO [cacheHandle:cycle]
+  ciclo en la clave 'bucle': su compute (o un handler de evento) la vuelve a pedir.
+

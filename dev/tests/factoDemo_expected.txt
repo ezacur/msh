@@ -1,0 +1,45 @@
+
+----------------------------------------------------------------------------
+== PASO 0. F = facto()   -- registra `facts` (incremental en 'grow'); cache VACIA
+  CPs (1) -- leer F.<n> | recalcular F.<n>_ | control F.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    facts  (sin calcular)                     eventos: grow->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 1. [F,x] = F.Fact(5)   -- MISS: computa 0!..5! de una vez
+  [facto] EVENT {grow}: pendientes {-} | caen {-} | sobreviven {-}
+  [facto] MISS  "facts" -> calculado
+  5! = 120
+
+----------------------------------------------------------------------------
+== PASO 2. [F,x] = F.Fact(7)   -- replay INCREMENTAL: solo los productos 6 y 7
+  [facto] EVENT {grow}: pendientes {facts} | caen {-} | sobreviven {-}
+  [facto] RPLAY "facts" -> 1 incremental(es) sobre el valor viejo
+  7! = 5040
+
+----------------------------------------------------------------------------
+== PASO 3. [F,x] = F.Fact(3)   -- HIT: ya estaba en la tabla
+  [facto] HIT   "facts"
+  3! = 6
+
+----------------------------------------------------------------------------
+== PASO 4. F.Reserve(9) y F.Reserve(12)   -- dos ediciones SIN leer: log de 2
+  [facto] EVENT {grow}: pendientes {facts} | caen {-} | sobreviven {-}
+  [facto] EVENT {grow}: pendientes {facts} | caen {-} | sobreviven {-}
+  CPs (1) -- leer F.<n> | recalcular F.<n>_ | control F.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    facts  (pendiente: 2 edit(s) en el log)   eventos: grow->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 5. [F,x] = F.Fact(12)   -- el replay repite las 2 ediciones EN ORDEN
+  [facto] RPLAY "facts" -> 2 incremental(es) sobre el valor viejo
+  12! = 479001600
+
+----------------------------------------------------------------------------
+== PASO 6. F.facts contra F.facts_ (recalculo forzado): el atajo no miente
+  [facto] HIT   "facts"
+  [facto] RECMP "facts" -> recalculado a la fuerza
+  coinciden: 1
+

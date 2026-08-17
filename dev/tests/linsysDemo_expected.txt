@@ -1,0 +1,64 @@
+
+----------------------------------------------------------------------------
+== PASO 0. L = linsys(A)   -- dos CPs: dcmp (la factorizacion) e invA (compuesta)
+  CPs (2) -- leer L.<n> | recalcular L.<n>_ | control L.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    dcmp  (sin calcular)                     eventos: changematrix->invalida
+    invA  (sin calcular)                     eventos: changematrix->invalida
+
+
+----------------------------------------------------------------------------
+== PASO 1. x = L\b   -- MISS: factoriza (O(n^3)) y guarda
+  [linsys] MISS  "dcmp" -> calculado
+  residuo |A*x-b|/|b| < 1e-10 : 1
+
+----------------------------------------------------------------------------
+== PASO 2. y = L\b2   -- HIT: NO vuelve a factorizar (esto es todo el asunto)
+  [linsys] HIT   "dcmp"
+  residuo |A*y-b2|/|b2| < 1e-10 : 1
+
+----------------------------------------------------------------------------
+== PASO 3. z = B/L   -- b/A con la MISMA factorizacion (via d'), otro HIT
+  [linsys] HIT   "dcmp"
+  residuo |z*A-B|/|B| < 1e-10 : 1
+
+----------------------------------------------------------------------------
+== PASO 4. la tabla: dcmp fresh, invA aun sin calcular
+  CPs (2) -- leer L.<n> | recalcular L.<n>_ | control L.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    dcmp  fresh: [1 1] decomposition         eventos: changematrix->invalida
+    invA  (sin calcular)                     eventos: changematrix->invalida
+
+
+----------------------------------------------------------------------------
+== PASO 5. W = inv(L)   -- MISS de invA, que SALE de dcmp (mira "sale de:")
+  [linsys] HIT   "dcmp"
+  [linsys] MISS  "invA" -> calculado
+  |A*W - I| < 1e-10 : 1
+  CPs (2) -- leer L.<n> | recalcular L.<n>_ | control L.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    dcmp  fresh: [1 1] decomposition         eventos: changematrix->invalida
+    invA  fresh: [400 400] double            eventos: changematrix->invalida | sale de: dcmp
+
+
+----------------------------------------------------------------------------
+== PASO 6. inv(L) otra vez   -- HIT: la inversa ya estaba
+  [linsys] HIT   "invA"
+  identica a la anterior: 1
+
+----------------------------------------------------------------------------
+== PASO 7. M = L; L = L.SetA(A2)   -- dcmp cae, invA cae con ella; M no se entera
+  [linsys] EVENT {changematrix}: pendientes {-} | caen {dcmp, invA} | sobreviven {-}
+  CPs (2) -- leer L.<n> | recalcular L.<n>_ | control L.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    dcmp  (sin calcular)                     eventos: changematrix->invalida
+    invA  (sin calcular)                     eventos: changematrix->invalida
+
+
+----------------------------------------------------------------------------
+== PASO 8. L\b usa la matriz NUEVA; M\b sigue con la vieja (COW)
+  [linsys] MISS  "dcmp" -> calculado
+  [linsys] HIT   "dcmp"
+  L resuelve con A2 : 1
+  M resuelve con A  : 1
+

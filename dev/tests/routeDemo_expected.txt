@@ -1,0 +1,71 @@
+
+----------------------------------------------------------------------------
+== PASO 0. R = route().Demo()   -- registra 3 definiciones; la cache queda VACIA
+  CPs (3) -- leer R.<n> | recalcular R.<n>_ | control R.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    bbox  (sin calcular)                     eventos: changegeom->sync
+    len   (sin calcular)                     eventos: addpoint->incremental, changegeom->sync
+    npts  (sin calcular)                     eventos: addpoint->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 1. R = R.AddPoint(0,0); R = R.AddPoint(3,4)   -- eventos con la cache vacia
+  [route] EVENT {addpoint+changegeom}: pendientes {-} | caen {-} | sobreviven {-}
+  [route] EVENT {addpoint+changegeom}: pendientes {-} | caen {-} | sobreviven {-}
+
+----------------------------------------------------------------------------
+== PASO 2. R.len y R.npts   -- MISS: computa y deposita. len = |(3,4)| = 5
+  [route] MISS  "len" -> calculado
+  [route] MISS  "npts" -> calculado
+  len=5   npts=2
+
+----------------------------------------------------------------------------
+== PASO 3. R2 = R   -- la COPIA comparte el MISMO cacheHandle
+
+----------------------------------------------------------------------------
+== PASO 4. R = R.AddPoint(3,8)   -- COW: len y npts quedan PENDIENTES con el edit (d=4)
+  [route] EVENT {addpoint+changegeom}: pendientes {len, npts} | caen {-} | sobreviven {-}
+  CPs (3) -- leer R.<n> | recalcular R.<n>_ | control R.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    bbox  (sin calcular)                     eventos: changegeom->sync
+    len   (pendiente: 1 edit(s) en el log)   eventos: addpoint->incremental, changegeom->sync
+    npts  (pendiente: 1 edit(s) en el log)   eventos: addpoint->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 5. R.len -> REPLAY incremental (5+4=9).  R2.len -> HIT del viejo (5)
+  [route] RPLAY "len" -> 1 incremental(es) sobre el valor viejo
+  R.len=9
+  [route] HIT   "len"
+  R2.len=5
+
+----------------------------------------------------------------------------
+== PASO 6. R = R.Scale(2)   -- npts SOBREVIVE al evento... CON su log pendiente intacto
+  [route] EVENT {changegeom}: pendientes {len} | caen {-} | sobreviven {npts}
+  CPs (3) -- leer R.<n> | recalcular R.<n>_ | control R.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    bbox  (sin calcular)                     eventos: changegeom->sync
+    len   (pendiente: 1 edit(s) en el log)   eventos: addpoint->incremental, changegeom->sync
+    npts  (pendiente: 1 edit(s) en el log)   eventos: addpoint->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 7. R.npts -> el edit del paso 4 se resuelve AHORA, incremental (2+1=3)
+  [route] RPLAY "npts" -> 1 incremental(es) sobre el valor viejo
+  npts=3
+
+----------------------------------------------------------------------------
+== PASO 8. R.len -> el log no es incremental (Scale no llevo args): sync absoluto (18)
+  [route] RPLAY "len" -> sync absoluto via changegeom
+  len=18
+
+----------------------------------------------------------------------------
+== PASO 9. R.bbox -> nadie lo habia pedido: MISS recien ahora (pereza)
+  [route] MISS  "bbox" -> calculado
+  bbox=[0 0 6 16]
+
+----------------------------------------------------------------------------
+== PASO 10. R.len_ -> recalculo FORZADO: verifica que los handlers no mintieron
+  [route] RECMP "len" -> recalculado a la fuerza
+  len=18
+

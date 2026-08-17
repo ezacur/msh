@@ -1,0 +1,66 @@
+
+----------------------------------------------------------------------------
+== PASO 0. C = collatz()   -- dos CPs: `lens` (incremental) y `best` (SIN eventos)
+  CPs (2) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    best  (sin calcular)                     eventos: (ninguno: solo MISS/HIT)
+    lens  (sin calcular)                     eventos: grow->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 1. [C,c] = C.Steps(27)   -- MISS: memoiza 1..27 de una vez
+  [collatz] EVENT {grow}: pendientes {-} | caen {-} | sobreviven {-}
+  [collatz] MISS  "lens" -> calculado
+  la cadena de 27 tiene 112 terminos
+
+----------------------------------------------------------------------------
+== PASO 2. [C,n,c] = C.Best(1000)   -- lens se EXTIENDE (28..1000); best MISS
+  [collatz] EVENT {grow}: pendientes {lens} | caen {-} | sobreviven {-}
+  [collatz] RPLAY "lens" -> 1 incremental(es) sobre el valor viejo
+  [collatz] MISS  "best" -> calculado
+  campeon bajo 1000: n=871 con 179 terminos
+
+----------------------------------------------------------------------------
+== PASO 3. la tabla: fijate en "sale de: lens" -- nadie lo declaro
+  CPs (2) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    best  fresh: [1 2] double                eventos: (ninguno: solo MISS/HIT) | sale de: lens
+    lens  fresh: [1 1000] double             eventos: grow->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 4. [C,c] = C.Steps(500)   -- HIT: ya estaba, cero trabajo
+  [collatz] HIT   "lens"
+  la cadena de 500 tiene 111 terminos
+
+----------------------------------------------------------------------------
+== PASO 5. [C,n,c] = C.Best(10000)   -- lens PENDIENTE; best CAE con ella
+  [collatz] EVENT {grow}: pendientes {lens} | caen {best(compuesta)} | sobreviven {-}
+  [collatz] RPLAY "lens" -> 1 incremental(es) sobre el valor viejo
+  [collatz] MISS  "best" -> calculado
+  campeon bajo 10000: n=6171 con 262 terminos
+
+----------------------------------------------------------------------------
+== PASO 6. C.Reserve(20000) y C.Reserve(30000)   -- dos ediciones sin leer
+  [collatz] EVENT {grow}: pendientes {lens} | caen {best(compuesta)} | sobreviven {-}
+  [collatz] EVENT {grow}: pendientes {lens} | caen {-} | sobreviven {-}
+  CPs (2) -- leer C.<n> | recalcular C.<n>_ | control C.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    best  (sin calcular)                     eventos: (ninguno: solo MISS/HIT)
+    lens  (pendiente: 2 edit(s) en el log)   eventos: grow->incremental
+
+
+----------------------------------------------------------------------------
+== PASO 7. C.best   -- el replay repite las 2 ediciones sobre lens, y best se rehace
+  [collatz] RPLAY "lens" -> 2 incremental(es) sobre el valor viejo
+  [collatz] MISS  "best" -> calculado
+  campeon bajo 30000: n=26623 con 308 terminos
+
+----------------------------------------------------------------------------
+== PASO 8. ES EXACTO: el atajo coincide BIT A BIT con el recalculo forzado
+  [collatz] HIT   "lens"
+  [collatz] RECMP "lens" -> recalculado a la fuerza
+  [collatz] RECMP "lens" -> tiradas las CPs que salian de el: best
+  lens identica al recompute: 1
+  VerifyCPs no marca nada:    1
+

@@ -1,0 +1,54 @@
+
+----------------------------------------------------------------------------
+== PASO 0. P = ivp( @(t,y) cos(t).*y , 1 )   -- registra `sol`; cache VACIA
+  CPs (1) -- leer I.<n> | recalcular I.<n>_ | control I.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    sol  (sin calcular)                     eventos: newtime->sync, changeproblem->invalida
+
+
+----------------------------------------------------------------------------
+== PASO 1. [P,y] = P.At(4)   -- MISS: integra 0 -> 4 (4000 pasos)
+  [ivp] EVENT {newtime}: pendientes {-} | caen {-} | sobreviven {-}
+  [ivp] ODE   y(4): 4000 paso(s) de RK4 desde t=0
+  [ivp] MISS  "sol" -> calculado
+  y(4) = 0.469164   (clava la exacta a 1e-9: 1)
+
+----------------------------------------------------------------------------
+== PASO 2. [P,y] = P.At(6)   -- sync que REUSA: integra SOLO 4 -> 6 (2000 pasos)
+  [ivp] EVENT {newtime}: pendientes {sol} | caen {-} | sobreviven {-}
+  [ivp] ODE   y(6): 2000 paso(s) de RK4 desde t=4
+  [ivp] RPLAY "sol" -> sync absoluto via newtime
+  y(6) = 0.756226   (clava la exacta a 1e-9: 1)
+
+----------------------------------------------------------------------------
+== PASO 3. [P,y] = P.At(5)   -- 4 -> 5 (1000 pasos), y se inserta EN SU SITIO
+  [ivp] EVENT {newtime}: pendientes {sol} | caen {-} | sobreviven {-}
+  [ivp] ODE   y(5): 1000 paso(s) de RK4 desde t=4
+  [ivp] RPLAY "sol" -> sync absoluto via newtime
+  y(5) = 0.383305   (clava la exacta a 1e-9: 1)
+  [ivp] HIT   "sol"
+  tiempos guardados: [0 4 5 6]
+
+----------------------------------------------------------------------------
+== PASO 4. P.At(5) otra vez   -- HIT: cero integracion
+  [ivp] HIT   "sol"
+  y(5) = 0.383305
+
+----------------------------------------------------------------------------
+== PASO 5. D = P; P = P.SetY0(2)   -- cambia el problema: sol CAE para P, no para D
+  [ivp] EVENT {changeproblem}: pendientes {-} | caen {sol} | sobreviven {-}
+  CPs (1) -- leer I.<n> | recalcular I.<n>_ | control I.CP.<n> :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    sol  (sin calcular)                     eventos: newtime->sync, changeproblem->invalida
+
+
+----------------------------------------------------------------------------
+== PASO 6. P.At(4) recomputa TODO con Y0=2; D conserva su solucion intacta (COW)
+  [ivp] ODE   y(4): 4000 paso(s) de RK4 desde t=0
+  [ivp] ODE   y(5): 1000 paso(s) de RK4 desde t=4
+  [ivp] ODE   y(6): 1000 paso(s) de RK4 desde t=5
+  [ivp] MISS  "sol" -> calculado
+  P: y(4) = 0.938328   (clava la exacta a 1e-9: 1)
+  [ivp] HIT   "sol"
+  D: y(4) = 0.469164   (HIT del valor viejo, con Y0=1)
+
