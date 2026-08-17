@@ -840,6 +840,112 @@ function test_cache( mode )
   expectError( @() I1.InfoCP( 'noExiste' ) , 'cachedOwner:noCP' );
   fprintf( 'OK  InfoCP    estado, eventos, deps, quien la usa, historial y coste -- sin falsear el historial\n' );
 
+  %% -------- 30) un compute que REVIENTA no puede dejar la pila sucia
+  %Es el invariante que sostiene TODA la maquinaria de dependencias y no lo
+  %guardaba nadie: solo el onCleanup de access. Si `stk` quedara sucia, el motor
+  %creeria que alguien esta calculando y anotaria dependencias FALSAS en todo lo
+  %que se leyera despues -- y en silencio, que es el peor modo de fallo.
+  ws30 = warning( 'off' , 'MATLAB:structOnObject' );
+  KS = pComp();
+  KS = KS.Define( 'boom' , @(o) error('probe:boom','revienta a proposito') , 'chg' , [] );
+  v  = KS.base;                                                           %#ok<NASGU>
+  assert( nInOf( KS ) == 0 , 'test_cache:stackBefore' , 'la pila no empieza limpia.' );
+  try, v = KS.boom; catch, end                                            %#ok<NASGU>
+  assert( nInOf( KS ) == 0 , 'test_cache:stackAfter' , ...
+          'tras un compute que revienta la pila queda en %d: se anotarian deps falsas.' , nInOf(KS) );
+  %el caso feo: el fallo ocurre DENTRO de una compuesta, o sea a media pila
+  KT = pComp();
+  KT = KT.Define( 'boom2' , @(o) error('probe:boom','revienta dentro') );
+  KT = KT.Define( 'mala'  , @(o) o.access('boom2') + 1 );
+  try, v = KT.mala; catch, end                                            %#ok<NASGU>
+  assert( nInOf( KT ) == 0 , 'test_cache:stackNested' , ...
+          'tras un fallo ANIDADO la pila queda en %d.' , nInOf(KT) );
+  %y lo que se lea a continuacion no puede heredar basura
+  v  = KT.viaAccess;                                                      %#ok<NASGU>
+  S30 = KT.InfoCP( 'viaAccess' );
+  assert( isequal( S30.deps , { 'base' } ) , 'test_cache:stackDeps' , ...
+          'tras el fallo, viaAccess sale de {%s} y deberia salir solo de {base}.' , ...
+          strjoin( S30.deps , ',' ) );
+  warning( ws30 );
+  fprintf( 'OK  pila      un compute que revienta (incluso anidado) la deja limpia; sin deps falsas\n' );
+
+  %% -------- 31) DIAMANTE: dos CPs que salen de la misma, y una que sale de las dos
+  %El cierre transitivo decia que funciona; nadie lo habia recorrido. Hasta
+  %ahora las deps se probaban en CADENA (base->mid->top), no confluyendo.
+  D1 = pDiamond();
+  t1 = D1.top;
+  assert( t1 == 31 , 'test_cache:diamondValue' , 'top deberia valer 31 y dio %g.' , t1 );
+  SD = D1.InfoCP( 'top' );
+  assert( isempty( setdiff( { 'left' , 'right' , 'base' } , SD.deps ) ) , ...
+          'test_cache:diamondDeps' , ...
+          'top deberia salir de left, right y (transitivamente) base; sale de {%s}.' , ...
+          strjoin( SD.deps , ',' ) );
+  SB = D1.InfoCP( 'base' );
+  assert( isempty( setdiff( { 'left' , 'right' , 'top' } , SB.usedBy ) ) , ...
+          'test_cache:diamondUsedBy' , ...
+          'de base deberian salir left, right y top; salen {%s}.' , strjoin( SB.usedBy , ',' ) );
+  D1 = D1.Bump();                       % cae base -> tienen que caer las TRES
+  t2 = D1.top;  t2r = D1.top_;
+  assert( t2 == 61 && t2 == t2r , 'test_cache:diamondDrop' , ...
+          'tras el evento top deberia valer 61: replay %g, recompute %g.' , t2 , t2r );
+  %y da igual en que ORDEN se pueblen las ramas
+  D2 = pDiamond();  v = D2.left;  v = D2.top;                             %#ok<NASGU>
+  D2 = D2.Bump();
+  assert( D2.top == 61 , 'test_cache:diamondOrder' , ...
+          'poblando left antes que top el resultado deberia ser el mismo y dio %g.' , D2.top );
+  fprintf( 'OK  diamante  dos ramas desde la misma base y una que sale de las dos: caen las tres\n' );
+
+  %% -------- 32) save/load con CPs COMPUESTAS: las deps NO viajan, se redescubren
+  %La cache es Transient, asi que al cargar no hay ni valores ni dependencias.
+  %Lo que hay que comprobar es que se REDESCUBREN al recalcular y que la
+  %invalidacion vuelve a funcionar -- si no, un objeto cargado serviria
+  %compuestas rancias para siempre.
+  DS = pDiamond();  v = DS.top;                                           %#ok<NASGU>
+  save( fn , 'DS' );  L2 = load( fn );  DL = L2.DS;
+  SL0 = DL.InfoCP( 'top' );
+  assert( isempty( SL0.deps ) , 'test_cache:loadDepsEmpty' , ...
+          [ 'tras load no deberia haber NI deps ni valores (la cache es Transient) y top ya ' ...
+            'declara salir de {%s}.' ] , strjoin( SL0.deps , ',' ) );
+  tl = DL.top;
+  assert( tl == 31 , 'test_cache:loadValue' , 'tras load top deberia dar 31 y dio %g.' , tl );
+  SL = DL.InfoCP( 'top' );
+  assert( isempty( setdiff( { 'left' , 'right' , 'base' } , SL.deps ) ) , ...
+          'test_cache:loadDeps' , ...
+          'tras load las deps deberian REDESCUBRIRSE; top sale de {%s}.' , strjoin( SL.deps , ',' ) );
+  DL = DL.Bump();                        % y la invalidacion tiene que seguir viva
+  tl2 = DL.top;  tl2r = DL.top_;
+  assert( tl2 == 61 && tl2 == tl2r , 'test_cache:loadDrop' , ...
+          'tras load la compuesta deberia seguir cayendo: replay %g, recompute %g.' , tl2 , tl2r );
+  fprintf( 'OK  save/load las CPs compuestas redescubren sus deps al cargar y siguen invalidandose\n' );
+
+  %% -------- 33) el VALOR HANDLE: el unico sitio donde se corrompe DATO
+  %Hasta ahora se probaba que el motor AVISA, no que el dano sea real. Aqui se
+  %demuestra: dos copias comparten la REFERENCIA, asi que mutar el valor por una
+  %se ve por la otra. El motor no puede impedirlo (el valor lo produce el
+  %dominio); por eso avisa. Y se contrasta con el mismo dato como VALOR.
+  wsx33 = warning( 'off' , 'cachedOwner:handleValue' );
+  HV = pHandleVal();
+  m1 = HV.hmap;                          % cacheado: un containers.Map (HANDLE)
+  GV = HV;                               % hermana: comparte el cacheHandle
+  m1( 'n' ) = 999;                       % mutar IN PLACE por una...
+  m2 = GV.hmap;                          % ...y la otra sirve lo mutado
+  assert( m2( 'n' ) == 999 , 'test_cache:handleShared' , ...
+          [ 'el COW deberia NO aislar un valor handle (es la razon del aviso), pero la hermana ' ...
+            'sirvio %g en vez de 999: si esto cambia, revisa el aviso handleValue.' ] , m2('n') );
+  %el mismo dato como VALOR si queda aislado
+  HS = pHandleVal();
+  s1 = HS.svalue;  KS2 = HS;
+  s1.n = 999;                            % copia local: no toca la cache
+  s2 = KS2.svalue;
+  assert( s2.n == 1 , 'test_cache:valueIsolated' , ...
+          'un valor struct SI deberia quedar aislado y la hermana vio %g.' , s2.n );
+  warning( wsx33 );
+  %y la tabla lo marca (la rama ya la cubria cpNote; aqui con un objeto de verdad)
+  th33 = evalc( 'disp( HV.CP )' );
+  assert( contains( th33 , '! hmap' ) && contains( th33 , 'containers.Map' ) , ...
+          'test_cache:handleTable' , 'la tabla deberia marcar la CP con valor handle; salio: %s' , th33 );
+  fprintf( 'OK  handle    un valor handle NO queda aislado entre copias (demostrado); uno de valor si\n' );
+
   fprintf( '\nTODOS LOS TESTS DEL PATRON DE CACHE: OK\n' );
 end
 
@@ -849,6 +955,14 @@ end
 
 function o = setCP( o )
   o.total = 5;               % una CP no se asigna
+end
+
+function n = nInOf( o )
+  %la profundidad de la pila de resolucion, mirando el handle por la puerta de
+  %atras (struct). Solo para el grupo 30: es el unico sitio donde hace falta
+  %ver un interior que el patron no expone a proposito.
+  s = struct( o );
+  n = s.CACHE.nIn;
 end
 
 function expectError( f , id )
