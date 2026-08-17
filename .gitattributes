@@ -1,3 +1,9 @@
 *.dll filter=lfs diff=lfs merge=lfs -text
 *.mexw64 filter=lfs diff=lfs merge=lfs -text
 * text=auto
+
+# Los goldens de test_cache se comparan BYTE A BYTE contra lo que imprime
+# MATLAB (que usa LF). Con la normalizacion de arriba, git los guardaba en LF y
+# los sacaba en CRLF, y la bateria fallaba entera nada mas hacer checkout.
+# Que nadie les toque los finales de linea.
+dev/tests/*_expected.txt -text
