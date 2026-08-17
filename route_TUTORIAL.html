@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>route — el patrón de caché en 53 líneas, línea a línea</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#ffffff; --ink:#1c1b19; --dim:#6b6862; --line:#e2ded6;
+  --code-bg:#f4f2ee; --com:#7c8f7a; --acc:#8a5a2b; --acc2:#2f6b7a;
+  --fresh:#2f7a4f; --pend:#a5761b; --gone:#9a3b3b; --chip:#f0eee9;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17171a; --panel:#1e1e22; --ink:#e8e6e1; --dim:#9b978f; --line:#33333a;
+    --code-bg:#15151a; --com:#7f9c7c; --acc:#d7a06a; --acc2:#7fbecb;
+    --fresh:#63c68c; --pend:#dcae57; --gone:#e0797a; --chip:#26262c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:980px;margin:0 auto;padding:32px 22px 90px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.32rem;margin:52px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:30px 0 6px;color:var(--acc)}
+p,li{max-width:74ch}
+.lede{color:var(--dim);font-size:1.05rem;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:.9em;
+  background:var(--chip);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-left:3px solid var(--acc2);
+  border-radius:6px;padding:12px 14px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:.845rem;line-height:1.5}
+pre .c{color:var(--com);font-style:italic}
+.note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:6px;padding:12px 16px;margin:16px 0}
+.note b{color:var(--acc)}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:520px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0}
+.step h4{margin:0 0 8px;font-size:.98rem;font-family:ui-monospace,Consolas,monospace}
+.step h4 .n{display:inline-block;min-width:1.9em;color:var(--dim);font-weight:400}
+.trace{font-family:ui-monospace,Consolas,monospace;font-size:.8rem;color:var(--dim);
+  white-space:pre-wrap;margin:8px 0 0;padding-left:10px;border-left:2px dotted var(--line)}
+.small{font-size:.86rem;color:var(--dim)}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+.lna{color:var(--dim);user-select:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1><code>route</code>: el patrón de caché en 53 líneas</h1>
+<p class="lede">La clase se escribió de cero, en un dominio nuevo, para poner a prueba una
+afirmación: <i>heredar de <code>cachedOwner</code> basta, y lo que escribes es puro dominio</i>.
+Funcionó a la primera. Este documento explica el fichero <b>línea a línea</b> y la sesión de
+pruebas <b>paso a paso</b>, con las trazas reales.</p>
+
+<div class="note">
+<b>Ficheros.</b> <code>dev\route.m</code> (la clase, 53 líneas con comentarios) y
+<code>dev\routeDemo.m</code> (la sesión de 10 pasos). Para correrla:
+<pre><code>addpath('C:\repos\msh','C:\repos\msh\dev');  routeDemo</code></pre>
+<span class="small">La mecánica interna del patrón (estados, replay, COW, el porqué de cada pieza)
+está en <a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>;
+aquí solo se explica lo que ve quien <b>usa</b> el patrón. Si algún término no te suena (CP, MISS,
+replay, COW…), su §0 tiene un <b>mini-glosario</b> de una línea por palabra.</span>
+</div>
+
+<div class="note">
+<b>La idea en cuatro líneas, por si entras por aquí.</b> Los valores derivados caros (la longitud de
+la ruta) se apuntan en un "cuaderno" la primera vez que alguien los lee. Editar la ruta <b>no
+recalcula nada</b>: solo decide qué hacer con cada apunte — dejarlo (la edición no le afecta),
+tacharlo (se recalculará al leer), o anotarle el cambio al margen para ponerse al día baratito
+cuando alguien lo pida. Y al copiar el objeto, las copias comparten cuaderno hasta que una edita.
+<br><br>
+<b>Lo que escribe quien usa la clase:</b>
+<code>R.len</code> lee (calcula solo si hace falta) ·
+<code>R.len_</code> recalcula a la fuerza ·
+<code>R.CP</code> imprime la tabla de estado.
+<b>Lo que escribe quien la programa:</b> las cuatro obligaciones de la §2 — heredar, el vocabulario
+<code>CP_EVENTS</code>, <code>fire</code> en cada editor, y un <code>Define</code> por derivado.
+</div>
+
+<h2>1. El dominio en una frase</h2>
+
+<p>Una ruta: waypoints 2D en <code>XY</code>, una fila por punto. Dos formas de editarla
+(añadir punto, escalar) y tres derivados que queremos cachear: la longitud total
+(<code>len</code>), la caja envolvente (<code>bbox</code>) y el número de puntos
+(<code>npts</code>). Cada derivado tiene una política de invalidación distinta a propósito —
+son los tres caminos del patrón.</p>
+
+<h2>2. El fichero, línea a línea</h2>
+
+<h3>La herencia y los datos</h3>
+
+<pre class="m"><code>classdef route &lt; cachedOwner</code></pre>
+
+<p><b>La línea que lo trae todo.</b> Por heredar de <code>cachedOwner</code>, <code>route</code>
+recibe: la lectura perezosa <code>R.len</code> con MISS/HIT/replay, el recálculo forzado
+<code>R.len_</code>, el plano de control <code>R.CP</code>, el copy-on-write entre copias, la
+serialización correcta (<code>save</code>/<code>load</code>), la traza <code>DEBUG</code>, la
+guarda de ciclos, la disciplina escalar (formar un array da un error claro,
+<code>cachedOwner:notScalar</code>, en vez de un críptico de MATLAB) y errores con nombre para los
+gestos equivocados (escribir una CP → <code>readOnlyCP</code>). No hay que escribir ni una línea de
+eso.</p>
+
+<pre class="m"><code>  properties (SetAccess = private)
+    XY = zeros(0,2)      % waypoints, una fila por punto
+  end</code></pre>
+
+<p><b>Los datos, con escritura cerrada.</b> <code>SetAccess = private</code> no es manía: obliga a
+que <i>toda</i> edición pase por los métodos de la clase — y como cada método editor termina en
+<code>fire</code>, cierra la única vía de corromper la caché (editar sin avisar). Se inicializa a
+<code>zeros(0,2)</code> (matriz vacía de 2 columnas) para que <code>diff</code>, <code>min</code> y
+<code>size</code> funcionen sin casos especiales desde el primer momento.</p>
+
+<pre class="m"><code>  properties (Constant, Hidden)
+    CP_EVENTS = { 'addpoint' , 'changegeom' }   % los eventos que dispara esta clase
+  end</code></pre>
+
+<p><b>El vocabulario — la única "configuración" del patrón.</b> Dos eventos: uno <b>específico</b>
+(<code>addpoint</code>: se añadió un punto, y se sabe cuál) y uno <b>general</b>
+(<code>changegeom</code>: la geometría cambió, sin más detalle). La lista existe para que
+<code>Define</code> rechace erratas: un evento mal escrito en una definición no fallaría nunca —
+simplemente la CP ignoraría ediciones que le afectan y serviría datos rancios. Con la lista, es un
+error inmediato y legible. <code>Hidden</code> solo la saca del <code>disp</code> del objeto.</p>
+
+<h3>Los editores: donde el dominio avisa</h3>
+
+<pre class="m"><code>    function obj = AddPoint( obj , x , y )
+      %anade un waypoint. Evento ESPECIFICO-&gt;GENERAL, con args: el tramo nuevo
+      d = 0;
+      if ~isempty( obj.XY ), d = norm( [ x y ] - obj.XY(end,:) ); end
+      obj.XY( end+1 , : ) = [ x y ];
+      obj = obj.fire( { 'addpoint' , 'changegeom' } , d );
+    end</code></pre>
+
+<ul>
+<li><code>d = 0;</code> y la guarda <code>~isempty</code>: el <b>primer</b> punto no crea tramo, así
+    que su "longitud añadida" es 0. Sin la guarda, <code>obj.XY(end,:)</code> sobre una matriz vacía
+    fallaría.</li>
+<li><code>d = norm( [x y] - obj.XY(end,:) )</code>: la longitud del tramo nuevo, calculada
+    <b>antes</b> de tocar <code>XY</code> (después, el "último punto" ya sería el nuevo). Este
+    <code>d</code> es el <b>argumento del evento</b>: la información que hace posible que
+    <code>len</code> se actualice sumando en vez de recalculando.</li>
+<li><code>obj.XY( end+1 , : ) = [ x y ];</code>: la edición en sí.</li>
+<li><code>obj = obj.fire( {...} , d )</code>: <b>la regla de oro del patrón</b> — todo método que
+    edita datos termina disparando sus eventos, de específico a general, con los args si los hay.
+    <code>fire</code> es un método heredado (protegido); devuelve el objeto porque es una clase de
+    valor, de ahí el <code>obj = obj.fire(...)</code>.</li>
+</ul>
+
+<pre class="m"><code>    function obj = Scale( obj , k )
+      %escala la ruta. Evento absoluto: SIN args
+      obj.XY = obj.XY * k;
+      obj = obj.fire( { 'changegeom' } );
+    end</code></pre>
+
+<p><b>El editor "gordo".</b> Escalar toca todos los puntos: no hay delta útil que pasar, así que
+dispara solo el evento <b>general</b> y <b>sin argumentos</b>. Fíjate en que no dispara
+<code>addpoint</code> — no se añadió ningún punto. Elegir bien qué eventos dispara cada editor es
+la mitad del diseño; la otra mitad es <code>Define</code>.</p>
+
+<h3>Las definiciones: qué se deriva y cómo reacciona</h3>
+
+<p>Las tres van dentro de <code>function obj = Demo( obj )</code> — un método normal que solo
+agrupa los <code>Define</code> para poder escribir <code>route().Demo()</code>; en una clase real
+irían en el constructor o donde convenga. <code>Define</code> es heredado: nombre, compute, y pares
+evento→handler.</p>
+
+<pre class="m"><code>      obj = obj.Define( 'len' , @(r) sum( vecnorm( diff( r.XY ) , 2 , 2 ) ) , ...
+                        'addpoint'   , @(v,~,d) v + d , ...                           % INCREMENTAL
+                        'changegeom' , @(v,r) sum( vecnorm( diff( r.XY ) ,2,2) ) );   % absoluto</code></pre>
+
+<p><b>La CP estrella: reacciona distinto a cada evento.</b> Por partes:</p>
+<ul>
+<li>El <b>compute</b> <code>@(r) sum( vecnorm( diff( r.XY ) , 2 , 2 ) )</code>: cómo calcular
+    <code>len</code> desde cero. <code>diff(XY)</code> da los vectores de cada tramo (fila i =
+    punto i+1 − punto i); <code>vecnorm(·,2,2)</code> da la norma euclídea <i>por filas</i> (el
+    primer 2 es la norma-2, el segundo es la dimensión); <code>sum</code> las junta. Recibe
+    <code>r</code>, el objeto entero.</li>
+<li>Handler de <code>addpoint</code>: <code>@(v,~,d) v + d</code>. <b>Tres argumentos → la base lo
+    lee como INCREMENTAL</b> (mira el <code>nargin</code> del handle: la firma es la declaración).
+    Recibe el valor viejo <code>v</code>, el objeto y el arg del evento <code>d</code>, y produce el
+    valor nuevo con una suma — sin recorrer la ruta. El segundo argumento va como <code>~</code>
+    <b>a propósito</b>: en el replay sería la ruta <i>de ahora</i>, no la de esa edición, así que un
+    incremental que lo lea da dato malo en silencio y <code>Define</code> lo rechaza
+    (<code>cachedOwner:incrementalUsesOwner</code>).</li>
+<li>Handler de <code>changegeom</code>: <code>@(v,r) sum(...)</code>. <b>Dos argumentos → sync
+    ABSOLUTO</b>: se sincroniza contra el objeto actual, que ya contiene todos los cambios, así que
+    uno solo subsume N ediciones acumuladas. (Aquí coincide con el compute; en general puede ser más
+    barato — p. ej. si <code>len</code> guardara los tramos, escalar sería multiplicar por
+    <code>k</code>.)</li>
+<li>El <b>orden de declaración importa</b>: <code>addpoint</code> antes que <code>changegeom</code>
+    = "prueba primero el atajo específico". Es la prioridad del replay.</li>
+</ul>
+
+<pre class="m"><code>      obj = obj.Define( 'bbox' , @(r) [ min( r.XY ,[],1) , max( r.XY ,[],1) ] , ...
+                        'changegeom' , @(v,r) [ min( r.XY ,[],1) , max( r.XY ,[],1) ] );</code></pre>
+
+<p><b>La CP conservadora.</b> Añadir un punto <i>sí</i> puede cambiar la caja — pero
+<code>bbox</code> no declara <code>addpoint</code>... y no le hace falta: <code>addpoint</code>
+siempre viene acompañado de <code>changegeom</code> (los editores disparan específico→general), y
+ese sí lo declara. Es la forma de decir <i>"no tengo atajo fino para este caso; mi sync general me
+vale"</i>. El <code>min(·,[],1)</code>/<code>max(·,[],1)</code> es min/max por columnas.</p>
+
+<pre class="m"><code>      obj = obj.Define( 'npts' , @(r) size( r.XY , 1 ) , ...
+                        'addpoint' , @(v,~,d) v + 1 );
+      %npts NO declara changegeom: escalar no cambia cuantos puntos hay -&gt; sobrevive</code></pre>
+
+<p><b>La CP con criterio — la decisión de diseño más fina del fichero.</b> Dos cosas:</p>
+<ul>
+<li>Su handler incremental <code>@(v,~,d) v + 1</code> <i>ignora</i> <code>d</code>: contar puntos
+    no necesita la longitud del tramo, pero la firma de 3 args mantiene la declaración de
+    incremental. Suma 1 por cada edición.</li>
+<li><b>No declara <code>changegeom</code></b>, y eso es una afirmación de dominio: <i>escalar la
+    ruta no cambia cuántos puntos tiene</i>. Gracias a eso, cuando se dispara <code>Scale</code>,
+    <code>npts</code> <b>sobrevive intacto</b> — ni se invalida ni queda pendiente. El error típico
+    es declarar el evento general "por si acaso": costaría un replay inútil en cada escalado. No
+    declarar <b>es</b> una decisión.</li>
+</ul>
+
+<p class="small">Y eso es todo el fichero: un <code>classdef</code>, una propiedad de datos, una
+constante, dos editores y tres <code>Define</code>. Ninguna línea de caché.</p>
+
+<h2>3. La sesión de pruebas, paso a paso</h2>
+
+<p>Esto es exactamente lo que ejecuta <code>routeDemo</code> (las trazas de abajo son las reales,
+capturadas en R2022a). Cada paso existe para demostrar un mecanismo concreto:</p>
+
+<div class="step">
+<h4><span class="n">0.</span> R = route().Demo();  R.DEBUG = true;</h4>
+<p class="small"><b>Qué prueba:</b> registrar definiciones no computa nada (pereza desde el
+principio). La tabla muestra las 3 CPs <i>(sin calcular)</i> y qué eventos declara cada una — y la
+<code>R</code> del encabezado la dedujo la base del nombre de la clase.</p>
+<p class="trace">  CPs (3) -- leer R.&lt;n&gt; | recalcular R.&lt;n&gt;_ | control R.CP.&lt;n&gt; :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    bbox  (sin calcular)                     eventos: changegeom-&gt;sync
+    len   (sin calcular)                     eventos: addpoint-&gt;incremental, changegeom-&gt;sync
+    npts  (sin calcular)                     eventos: addpoint-&gt;incremental</p>
+</div>
+
+<div class="step">
+<h4><span class="n">1.</span> R = R.AddPoint(0,0);  R = R.AddPoint(3,4);</h4>
+<p class="small"><b>Qué prueba:</b> los editores disparan eventos aunque no haya nada cacheado —
+y el evento sobre caché vacía no hace trabajo (nada pende, nada cae).</p>
+<p class="trace">[route] EVENT {addpoint+changegeom}: pendientes {-} | caen {-} | sobreviven {-}
+[route] EVENT {addpoint+changegeom}: pendientes {-} | caen {-} | sobreviven {-}</p>
+</div>
+
+<div class="step">
+<h4><span class="n">2.</span> R.len → 5,  R.npts → 2</h4>
+<p class="small"><b>Qué prueba:</b> el MISS — primera lectura computa y deposita. El 5 es
+verificable a mano: un solo tramo de (0,0) a (3,4), el triángulo 3-4-5.</p>
+<p class="trace">[route] MISS  "len" -&gt; calculado
+[route] MISS  "npts" -&gt; calculado</p>
+</div>
+
+<div class="step">
+<h4><span class="n">3.</span> R2 = R;</h4>
+<p class="small"><b>Qué prueba:</b> copiar el objeto no copia la caché — las dos copias comparten el
+mismo <code>cacheHandle</code>. No hay traza porque no pasa <i>nada</i>: esa es la prueba.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">4.</span> R = R.AddPoint(3,8);</h4>
+<p class="small"><b>Qué prueba:</b> el copy-on-write. R recibe un handle nuevo donde <code>len</code>
+y <code>npts</code> quedan <b>pendientes</b> con el edit anotado (su arg: d = |(3,8)−(3,4)| = 4);
+R2 conserva el handle viejo intacto. Nota que <b>ningún valor se recalculó</b>: editar solo anota.</p>
+<p class="trace">[route] EVENT {addpoint+changegeom}: pendientes {len, npts} | caen {-} | sobreviven {-}
+  ...
+    len   (pendiente: 1 edit(s) en el log)   eventos: addpoint-&gt;incremental, changegeom-&gt;sync
+    npts  (pendiente: 1 edit(s) en el log)   eventos: addpoint-&gt;incremental</p>
+</div>
+
+<div class="step">
+<h4><span class="n">5.</span> R.len → 9   ·   R2.len → 5</h4>
+<p class="small"><b>Qué prueba:</b> el replay incremental y el aislamiento entre copias, a la vez.
+R resuelve su pendiente con el atajo (5 + 4 = 9, sin recorrer la ruta); R2 hace HIT de <i>su</i>
+valor, 5 — que es lo correcto para R2, porque R2 no tiene el tercer punto.</p>
+<p class="trace">[route] RPLAY "len" -&gt; 1 incremental(es) sobre el valor viejo
+[route] HIT   "len"</p>
+</div>
+
+<div class="step">
+<h4><span class="n">6.</span> R = R.Scale(2);</h4>
+<p class="small"><b>Qué prueba:</b> el caso que <code>cart</code> no ejercita — una CP
+<b>pendiente</b> que <b>sobrevive</b> a un evento que no declara. <code>npts</code> venía pendiente
+del paso 4 (nadie lo había leído) y <code>Scale</code> no le afecta: cruza el evento <b>con su log
+intacto</b>, sin resolverse ni perderse. <code>len</code> sí declara <code>changegeom</code>: sigue
+pendiente, pero su log se funde en un marcador (el edit de Scale no llevó args — el incremental ha
+muerto para esta tanda).</p>
+<p class="trace">[route] EVENT {changegeom}: pendientes {len} | caen {-} | sobreviven {npts}
+  ...
+    len   (pendiente: 1 edit(s) en el log)   eventos: addpoint-&gt;incremental, changegeom-&gt;sync
+    npts  (pendiente: 1 edit(s) en el log)   eventos: addpoint-&gt;incremental</p>
+</div>
+
+<div class="step">
+<h4><span class="n">7.</span> R.npts → 3</h4>
+<p class="small"><b>Qué prueba:</b> que el log que sobrevivió al paso 6 sigue siendo utilizable — el
+edit del paso 4 se resuelve <i>ahora</i>, incrementalmente (2 + 1 = 3), tres ediciones después de
+haberse anotado. La pereza no pierde información por el camino.</p>
+<p class="trace">[route] RPLAY "npts" -&gt; 1 incremental(es) sobre el valor viejo</p>
+</div>
+
+<div class="step">
+<h4><span class="n">8.</span> R.len → 18</h4>
+<p class="small"><b>Qué prueba:</b> la cascada del replay. El marcador de <code>len</code> no
+permite incremental (el Scale no llevó args), así que cae al segundo escalón: el sync absoluto vía
+<code>changegeom</code>, que recalcula contra el estado actual — 9 × 2 = 18. Un solo sync habría
+subsumido cualquier número de ediciones acumuladas.</p>
+<p class="trace">[route] RPLAY "len" -&gt; sync absoluto via changegeom</p>
+</div>
+
+<div class="step">
+<h4><span class="n">9.</span> R.bbox → [0 0 6 16]</h4>
+<p class="small"><b>Qué prueba:</b> la pereza extrema. <code>bbox</code> atravesó toda la sesión —
+tres AddPoint, un Scale — sin computarse <b>ni una vez</b>, porque nadie lo pidió. Su primer MISS es
+ahora, y ya sale con la geometría final: (0,0)-(3,4)-(3,8) escalado ×2 → esquinas (0,0) y (6,16).</p>
+<p class="trace">[route] MISS  "bbox" -&gt; calculado</p>
+</div>
+
+<div class="step">
+<h4><span class="n">10.</span> R.len_ → 18</h4>
+<p class="small"><b>Qué prueba:</b> la auditoría del propio usuario. El sufijo <code>_</code> fuerza
+el recálculo desde cero, ignorando caché y handlers. Si diera distinto de 18, algún handler mentía.
+Da 18: los atajos de esta sesión (la suma incremental y el sync) produjeron exactamente lo que
+habría producido computar siempre. Es el gesto a usar cuando estrenas un handler.</p>
+<p class="trace">[route] RECMP "len" -&gt; recalculado a la fuerza</p>
+</div>
+
+<div class="note">
+<b>El hilo de toda la sesión:</b> los valores solo cambian en las <b>lecturas</b> (pasos 2, 5, 7, 8,
+9, 10); las <b>ediciones</b> (1, 4, 6) solo mueven entradas entre estados. Y cada valor servido por
+un atajo es verificable contra el recálculo — el paso 10 lo hace explícitamente.
+</div>
+
+<h2>4. Lo que NO está en el fichero</h2>
+
+<p>Todo esto funcionó en la sesión sin que <code>route.m</code> contenga una línea al respecto:</p>
+
+<div class="tw">
+<table>
+<tr><th>Funcionalidad</th><th>Quién la puso</th><th>Dónde se vio</th></tr>
+<tr><td>lectura perezosa <code>R.len</code> con MISS/HIT</td><td><code>cachedOwner.subsref</code> + <code>access</code></td><td>pasos 2, 5, 9</td></tr>
+<tr><td>replay incremental y cascada a sync absoluto</td><td><code>cachedOwner.replay</code></td><td>pasos 5, 7, 8</td></tr>
+<tr><td>copy-on-write entre copias</td><td><code>cachedOwner.fire</code></td><td>pasos 4–5 (R2 conserva 5)</td></tr>
+<tr><td>sobrevivir / pender / caer por evento</td><td>la clasificación de <code>fire</code></td><td>paso 6</td></tr>
+<tr><td>colapso del log a marcador</td><td><code>fire</code></td><td>paso 6 (<code>len</code>)</td></tr>
+<tr><td>recálculo forzado <code>R.len_</code></td><td><code>subsref</code>, sufijo <code>_</code></td><td>paso 10</td></tr>
+<tr><td>la tabla <code>R.CP</code> (con la <code>R</code> deducida)</td><td><code>displayCachedView</code></td><td>pasos 0, 4, 6</td></tr>
+<tr><td>trazas <code>[route] ...</code></td><td><code>DEBUG</code> heredado</td><td>toda la sesión</td></tr>
+<tr><td>validación de nombres y eventos en <code>Define</code></td><td><code>cachedOwner.Define</code></td><td>(silenciosa: nada que rechazar)</td></tr>
+<tr><td><code>save</code>/<code>load</code>: la caché <b>no</b> se guarda (se recomputa), las definiciones <b>sí</b></td><td><code>CACHE</code> <code>Transient</code> + <code>loadobj</code></td><td>no ejercitado aquí; ver §5 y el <code>cache_TUTORIAL</code></td></tr>
+<tr><td>guarda de ciclos, <code>.delete</code>/<code>.set</code>/<code>.removeCP</code></td><td>la base</td><td>no ejercitados aquí; ver §5</td></tr>
+</table>
+</div>
+
+<h2>5. Las pruebas que respaldan el patrón</h2>
+
+<p>La sesión de arriba es la prueba de <code>route</code>; el patrón en sí tiene su batería
+<b>consolidada en el repo</b>: una sola llamada, <code>dev\tests\test_cache.m</code>, lo verifica
+todo, y los <b>cinco</b> demos se comparan <b>byte a byte</b> contra su salida esperada (golden) — así
+se detecta cualquier cambio de comportamiento, no solo los que revientan. Es lo que hay que correr
+antes y después de tocar cualquier fichero <code>cache*</code>:</p>
+
+<pre><code>addpath(genpath('C:\repos\msh'));  test_cache</code></pre>
+
+<p>Lo que cubre, en grupos (uno por línea de su salida):</p>
+
+<div class="tw">
+<table>
+<tr><th>Grupo</th><th>Qué verifica</th></tr>
+<tr><td>demos golden</td><td><code>cartDemo</code>, <code>routeDemo</code>, <code>serieDemo</code>, <code>factoDemo</code> e <code>ivpDemo</code>, byte a byte contra <code>*_expected.txt</code> (con la <i>release</i> de MATLAB en la que se grabaron anotada al lado, para no confundir un cambio de formato con una regresión)</td></tr>
+<tr><td>guardas de <code>Define</code></td><td>rechaza sombras (propiedades, métodos, también los Hidden/privados), el sufijo <code>_</code>, erratas de evento, firmas ambiguas <code>@(varargin)</code>, y dos handlers incrementales</td></tr>
+<tr><td><code>fire</code> valida</td><td>una errata de evento en un editor es un <b>error</b>, no caché rancia silenciosa</td></tr>
+<tr><td>extensión</td><td>una subclase con <code>subsref</code> propio puede llamar al motor de la base</td></tr>
+<tr><td>valor anidado</td><td>una CP cuyo valor es un objeto con <code>subsref</code> propio se indexa respetándolo</td></tr>
+<tr><td><code>MAXLOG</code></td><td>200 ediciones sin leer → el log colapsa a 1 marcador y el valor sigue correcto</td></tr>
+<tr><td>núcleo</td><td>COW + replay incremental + hermana intacta + sync absoluto (la sesión de <code>cart</code> en 4 asserts)</td></tr>
+<tr><td>ciclos / proxy</td><td>una CP que se pide a sí misma corta con error; el proxy huérfano y el array de proxies dan error con nombre</td></tr>
+<tr><td><code>save</code>/<code>load</code></td><td>las definiciones viajan, la caché revive (MISS→HIT), el pendiente no sobrevive, el atajo incremental sí, y un evento <b>renombrado</b> tras guardar se detecta al cargar (<code>staleEvents</code>)</td></tr>
+<tr><td>peso del <code>.mat</code></td><td>~2 KB con 1,28 MB cacheados: la caché no viaja</td></tr>
+<tr><td>robustez</td><td><code>RemoveCP</code> con el handle muerto revive la caché; cachear un objeto <i>handle</i> avisa (el COW no aísla ahí)</td></tr>
+<tr><td>rendimiento</td><td>una edición con 64 CPs cacheadas no puede costar más de 4× la de 4 (guarda por <i>ratio</i>, calibrada reintroduciendo la regresión a propósito)</td></tr>
+<tr><td>escalar</td><td>concatenar, <code>repmat</code>, <code>A(3)=o</code>, <code>o(k)</code>… bloqueados con <code>notScalar</code>; <code>o(1)</code> es no-op (statements incluidos); <code>o.total = x</code> da <code>readOnlyCP</code></td></tr>
+<tr><td>la tabla avisa</td><td>marca el valor <i>handle</i>, el evento huérfano, la CP sin eventos y el atajo roto — y una tabla limpia no cambia ni un byte</td></tr>
+<tr><td>el dueño</td><td>un handler incremental no puede leer el objeto: <code>Define</code> rechaza el anónimo que lo hace, y con uno opaco el replay <b>descarta el atajo</b> (dato correcto, atajo perdido)</td></tr>
+<tr><td>CPs compuestas</td><td>una CP que sale de otra cae con ella: también en cadena, también si declaraba handler, y también <b>después de un replay</b> (la dependencia sobrevive al refresco)</td></tr>
+<tr><td>olvido de eventos</td><td>una CP que lee datos y no declara <i>ni un</i> evento se avisa al definirla y queda marcada en la tabla</td></tr>
+<tr><td>atajo roto</td><td>un handler que revienta avisa una vez, se cuentan las veces y la tabla lo marca — degradar es correcto, que no se note no</td></tr>
+<tr><td>listas separadas por comas</td><td><code>{o.cp.campo}</code> devuelve la lista entera (directo, por el proxy y con el recálculo forzado), sin truncar en silencio</td></tr>
+<tr><td>especificidad</td><td>de una edición decide el evento <b>más específico</b>, también frente al atajo incremental de uno más general</td></tr>
+<tr><td><code>VerifyCPs</code></td><td>caza los dos fallos que ninguna guarda ve — el handler que <i>miente</i> y el olvido <b>parcial</b> de eventos — sin tocar la caché</td></tr>
+<tr><td><code>refreshDefs</code></td><td>al cargar un <code>.mat</code>, las definiciones re-registradas son las del <b>código</b>; las <i>ad hoc</i> del usuario conservan las del fichero</td></tr>
+</table>
+</div>
+
+<div class="note">
+<b>Historia: lo que encontró la revisión que dio forma a esa batería</b> (con <code>route</code> ya
+escrito y funcionando): que <code>access</code>/<code>recompute</code> eran <code>private</code> y el
+camino de extensión documentado no existía; que una errata en <code>fire</code> producía caché
+rancia en silencio; que un segundo handler incremental quedaba muerto sin avisar; que indexar dentro
+de un valor-objeto se saltaba su <code>subsref</code>; y que el log incremental crecía sin techo.
+Cada hallazgo se corrigió y se convirtió en un grupo de la batería — los ficheros sonda sueltos de
+aquella época ya no existen: todo vive en <code>test_cache.m</code>. Y las dos sesiones
+(<code>cartDemo</code>, <code>routeDemo</code>) siguen dando salida <b>idéntica</b> byte a byte a la
+de entonces.
+</div>
+
+<hr>
+<p class="small">Ficheros: <code>dev\route.m</code>, <code>dev\routeDemo.m</code> (este tutorial) ·
+<code>cachedOwner.m</code> (la base) · <code>cacheHandle.m</code>, <code>cacheProxy.m</code>
+(raíz) · la mecánica interna, en <code>cache_TUTORIAL.html</code>.</p>
+
+</div>
+<script>
+document.querySelectorAll('pre code').forEach(function(p){
+  var esc = function(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  p.innerHTML = p.textContent.split('\n').map(function(L){
+    var q = false, cut = -1;
+    for (var i = 0; i < L.length; i++){
+      var ch = L[i];
+      if (ch === "'") q = !q;
+      else if (ch === '%' && !q){ cut = i; break; }
+    }
+    if (cut < 0) return esc(L);
+    return esc(L.slice(0,cut)) + '<span class="c">' + esc(L.slice(cut)) + '</span>';
+  }).join('\n');
+});
+</script>
+</body>
+</html>

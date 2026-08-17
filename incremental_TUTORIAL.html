@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>facto, ivp, collatz y linsys — cuándo compensa cachear</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#ffffff; --ink:#1c1b19; --dim:#6b6862; --line:#e2ded6;
+  --code-bg:#f4f2ee; --com:#7c8f7a; --acc:#8a5a2b; --acc2:#2f6b7a;
+  --fresh:#2f7a4f; --pend:#a5761b; --gone:#9a3b3b; --chip:#f0eee9;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17171a; --panel:#1e1e22; --ink:#e8e6e1; --dim:#9b978f; --line:#33333a;
+    --code-bg:#15151a; --com:#7f9c7c; --acc:#d7a06a; --acc2:#7fbecb;
+    --fresh:#63c68c; --pend:#dcae57; --gone:#e0797a; --chip:#26262c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:980px;margin:0 auto;padding:32px 22px 90px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.32rem;margin:52px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:30px 0 6px;color:var(--acc)}
+h4{font-size:.98rem;margin:22px 0 4px;color:var(--acc2)}
+p,li{max-width:74ch}
+.lede{color:var(--dim);font-size:1.05rem;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:.9em;
+  background:var(--chip);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-left:3px solid var(--acc2);
+  border-radius:6px;padding:12px 14px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:.845rem;line-height:1.5}
+pre .c{color:var(--com);font-style:italic}
+.note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:6px;padding:12px 16px;margin:16px 0}
+.note b{color:var(--acc)}
+.key{border-left-color:var(--acc2)}
+.key b{color:var(--acc2)}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:520px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0}
+.step h4{margin:0 0 8px;font-size:.98rem;font-family:ui-monospace,Consolas,monospace;color:var(--ink)}
+.step h4 .n{display:inline-block;min-width:1.9em;color:var(--dim);font-weight:400}
+.trace{font-family:ui-monospace,Consolas,monospace;font-size:.8rem;color:var(--dim);
+  white-space:pre-wrap;margin:8px 0 0;padding-left:10px;border-left:2px dotted var(--line)}
+.small{font-size:.86rem;color:var(--dim)}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+.ok{color:var(--fresh);font-weight:600}
+.no{color:var(--gone);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1><code>facto</code>, <code>ivp</code>, <code>collatz</code> y <code>linsys</code>: cuándo compensa cachear</h1>
+<p class="lede">Tres clases con la misma forma —un derivado que <b>solo crece</b>, y una lectura que
+calcula <i>solo lo que falta</i>— y tres respuestas distintas, todas medidas. <code>facto</code>
+enseña el mecanismo con un dominio que cabe en la cabeza y resulta ser un anti-ejemplo perfecto: cuesta
+<b>131×</b> lo que resolverlo a pelo. <code>ivp</code> empata o gana, según cuánto trabajo haya debajo.
+<code>collatz</code> gana <b>27×</b> (100× si la tabla es grande) y de paso trae la primera <b>CP
+compuesta</b> de los ejemplos. Y <code>linsys</code> —el clásico <code>A</code> con la factorización
+guardada— es el caso práctico: 40× por término independiente, y un valor que MATLAB <i>ni siquiera
+puede serializar</i>. Por el camino, los cuatro desmontan las confusiones más comunes del patrón.</p>
+
+<div class="note">
+<b>Ficheros.</b> <code>dev\facto.m</code>, <code>dev\ivp.m</code>, <code>dev\collatz.m</code> y
+<code>dev\linsys.m</code>, con sus cuatro demos. Las medidas de la §7 salen de
+<code>dev\bench_incremental.m</code>, que puedes correr tú. Para todo:
+<pre><code>addpath('C:\repos\msh','C:\repos\msh\dev');
+factoDemo, ivpDemo, collatzDemo, linsysDemo, bench_incremental</code></pre>
+<span class="small">La mecánica interna del patrón está en
+<a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>; cómo se
+<i>decide</i> una política, en
+<a href="serie_TUTORIAL.html" style="color:var(--acc2)"><code>serie_TUTORIAL.html</code></a>. Todas las
+trazas de este documento son <b>salida real</b> de esos demos en R2022a.</span>
+</div>
+
+<div class="note key">
+<b>Las dos frases, por si no lees más.</b> (1) <b>«Incremental» es una firma, no una idea.</b> El
+handler de 3+ argumentos <code>@(v,~,args)</code> es un mecanismo concreto y limitado: repite edición a
+edición y <i>no puede mirar el objeto</i>. Si tu atajo necesita mirarlo, lo que quieres no es ese
+handler — es un <b>sync absoluto <code>@(v,o)</code> que reúsa el valor viejo</b>, que también recibe
+<code>v</code> y a nadie obliga a tirarlo. «Absoluto» dice <i>contra qué estado</i> te pones al día, no
+<i>cuánto trabajo</i> repites. (2) <b>Un atajo compite contra el recompute, no contra la nada.</b> En
+MATLAB el recompute suele estar vectorizado, y un atajo escrito en bucle puede perder — a
+<code>facto</code> le pasa, medido; a <code>collatz</code>, que no tiene builtin contra el que competir,
+no. Y el patrón entero tiene un <b>peaje fijo</b> de ~1–3 ms por lectura, así que la pregunta que
+decide no es «¿es caro mi cómputo?» sino <b>«¿el trabajo que evito es bastante mayor que unos
+milisegundos?»</b>. La §7 mide dónde está esa raya.
+</div>
+
+<h2>1. La forma que comparten</h2>
+
+<p>Los tres primeros ejemplos guardan en una CP una <b>tabla que solo crece</b> y responden a una
+pregunta puntual leyendo de ella. Los dos que abren el documento, lado a lado:</p>
+
+<div class="tw">
+<table>
+<tr><th></th><th><code>facto</code></th><th><code>ivp</code></th></tr>
+<tr><td>los datos</td><td><code>N</code>: hasta qué factorial hay que llegar</td>
+    <td><code>F</code>, <code>Y0</code>, <code>DT</code> (el problema) y <code>TS</code>: los tiempos pedidos</td></tr>
+<tr><td>la CP</td><td><code>facts</code> = <code>[0! 1! … N!]</code></td>
+    <td><code>sol</code> = pares <code>[t,y]</code> <b>ordenados</b>, fila 1 = <code>[0,Y0]</code></td></tr>
+<tr><td>la pregunta</td><td><code>F.Fact(n)</code> → <code>facts(n+1)</code></td>
+    <td><code>P.At(t)</code> → la <code>y</code> de la fila con ese <code>t</code></td></tr>
+<tr><td>qué falta calcular</td><td>los productos de <code>N+1</code> a <code>n</code></td>
+    <td>el tramo desde el <code>t</code> guardado más cercano <b>por debajo</b></td></tr>
+<tr><td>coste del compute</td><td>trivial (un <code>cumprod</code>)</td>
+    <td>proporcional al tramo: miles de pasos de RK4</td></tr>
+</table>
+</div>
+
+<p><code>collatz</code> (§4) es de la misma familia que <code>facto</code> —una tabla
+<code>1..N</code> que solo crece— pero con un compute que <b>no se puede vectorizar</b>, y ahí está
+toda la diferencia entre perder 131× y ganar 27×.</p>
+
+<p>Y comparten el gesto que hace que esto funcione: <b>preguntar es editar</b>. Pedir
+<code>Fact(7)</code> cuando la tabla llega a 5 <i>modifica</i> el objeto (sube <code>N</code>) y por
+tanto dispara un evento; pedir <code>At(5)</code> añade 5 a la lista de tiempos y dispara otro. Por eso
+las dos devuelven el objeto:</p>
+
+<pre><code>[ F , x ] = F.Fact( 7 );     <span class="c">% hay que reasignar: es clase de VALOR</span>
+[ P , y ] = P.At( 5 );</code></pre>
+
+<p class="small">Si te chirría, es la misma incomodidad de siempre en MATLAB con las clases de valor,
+y es honesta: la tabla ampliada <i>es</i> estado nuevo. Quien no quiera reasignar tiene la salida de
+las clases <code>handle</code> — a costa de perder el aislamiento entre copias que da todo el
+copy-on-write del patrón.</p>
+
+<h2>2. <code>facto</code>: el atajo incremental en su forma pura</h2>
+
+<p>La clase entera, quitando comentarios:</p>
+
+<pre><code>classdef facto &lt; cachedOwner
+  properties (SetAccess = private)
+    N = 0                                    <span class="c">% el factorial mas alto ya apuntado</span>
+  end
+  properties (Constant, Hidden)
+    CP_EVENTS = { 'grow' }                   <span class="c">% un solo evento: la tabla crece</span>
+  end
+  methods
+    function obj = facto()
+      obj = obj.Define( 'facts' , @(o) cumprod( [ 1 , 1:o.N ] ) , ...
+                        'grow'  , @(v,~,a,b) [ v , v(end) * cumprod( a+1 : b ) ] );
+    end
+    function obj = Reserve( obj , n )        <span class="c">% apunta sin leer</span>
+      if n &gt; obj.N
+        a = obj.N;  obj.N = n;
+        obj = obj.fire( 'grow' , a , n );    <span class="c">% args: DESDE donde y HASTA donde</span>
+      end
+    end
+    function [ obj , f ] = Fact( obj , n )
+      obj = obj.Reserve( n );
+      t   = obj.access( 'facts' );           <span class="c">% dentro de la clase: access, no punto</span>
+      f   = t( n+1 );
+    end
+  end
+end</code></pre>
+
+<h3>Por qué el handler recibe <code>(a,b)</code> y no <code>n</code></h3>
+
+<p>Ésta es la decisión de diseño del fichero, y es la misma que en <code>serie</code>: <b>el handler
+incremental no puede mirar el objeto</b> — en el replay de varias ediciones recibiría el estado
+<i>final</i> para todas, no el de cada una. Así que todo lo que el atajo necesita tiene que viajar en
+los <b>argumentos del evento</b>.</p>
+
+<p>Si el evento llevara solo <code>n</code> («ahora hay que llegar a <code>n</code>»), el handler no
+sabría <i>desde dónde</i> empezar a multiplicar sin mirar la longitud de… bueno, en este caso podría
+mirar <code>v</code>, que sí tiene. Pero llevar el par <code>(a,b)</code> explícito lo hace evidente y
+lo blinda: cada edición <b>lleva su propio tramo</b>, y por eso una cadena de <code>Reserve</code>
+pendientes se repite en orden sin equivocarse. Es exactamente el papel del <code>n</code> que
+<code>serie.Push</code> pasa junto al valor.</p>
+
+<div class="note">
+<b>El <code>~</code> no es cosmética.</b> <code>@(v,~,a,b)</code> declara el segundo argumento
+<i>no usado</i>. Si lo nombraras y lo leyeras, <code>Define</code> te lo rechaza en el acto
+(<code>cachedOwner:incrementalUsesOwner</code>) — porque es la puerta al peor fallo del patrón: un
+valor mal calculado <i>en silencio</i>, que además <b>acierta</b> cuando hay una sola edición pendiente
+y por tanto pasa cualquier test de juguete.
+</div>
+
+<h3>La sesión</h3>
+
+<div class="step">
+<h4><span class="n">1.</span> [F,x] = F.Fact(5) — MISS: la tabla no existe</h4>
+<p class="trace">  [facto] EVENT {grow}: pendientes {-} | caen {-} | sobreviven {-}
+  [facto] MISS  "facts" -&gt; calculado
+  5! = 120</p>
+<p class="small">El evento no encuentra nada que hacer (la caché está vacía: no hay entrada que poner
+pendiente). La lectura falla, computa <code>cumprod([1 1:5])</code> y lo deposita.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">2.</span> [F,x] = F.Fact(7) — replay incremental: solo 6 y 7</h4>
+<p class="trace">  [facto] EVENT {grow}: pendientes {facts} | caen {-} | sobreviven {-}
+  [facto] RPLAY "facts" -&gt; 1 incremental(es) sobre el valor viejo
+  7! = 5040</p>
+<p class="small">Ahora sí hay valor, así que el evento lo deja <b>pendiente</b> con la edición
+apuntada. La lectura hace el replay: <code>[v , v(end)*cumprod(6:7)]</code>. Dos productos.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">3.</span> [F,x] = F.Fact(3) — HIT: no hay edición</h4>
+<p class="trace">  [facto] HIT   "facts"
+  3! = 6</p>
+<p class="small"><code>Reserve(3)</code> no dispara nada (3 &lt; 7), así que no hay evento, no hay
+pendiente y la lectura es un HIT limpio. Que pedir «hacia atrás» sea gratis es la mitad del valor de
+memoizar.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">4–5.</span> Reserve(9), Reserve(12) y luego leer — dos ediciones en el log</h4>
+<p class="trace">    facts  (pendiente: 2 edit(s) en el log)   eventos: grow-&gt;incremental
+
+  [facto] RPLAY "facts" -&gt; 2 incremental(es) sobre el valor viejo
+  12! = 479001600</p>
+<p class="small">Aquí se ve la <b>pereza</b> en estado puro: dos ediciones seguidas sin ninguna lectura
+entre medias no calculan nada; se apilan. Al leer, el replay las repite <b>en orden</b> — primero el
+tramo 8→9, luego el 10→12 — y cada una usa <i>sus</i> argumentos. De ahí que cada edición tenga que
+llevar su propio par.</p>
+</div>
+
+<div class="note">
+<b><code>facto</code> no tiene red absoluta, y eso tiene una consecuencia real.</b> Solo declara un
+handler incremental. Si se apilan más de <code>MAXLOG</code> = 32 ediciones sin leer, el motor colapsa
+el log a un <i>marcador</i> (es su defensa contra un log que crece sin límite), y entonces el replay
+busca un <b>sync absoluto</b> al que degradar… y no lo encuentra: recomputa la tabla entera. El dato
+sigue siendo correcto — eso siempre —, pero el atajo se pierde. En <code>facto</code> da igual porque
+recomputar es baratísimo; si tu compute fuera caro, <b>declara también el absoluto</b>. Es justo lo que
+hace <code>ivp</code>.
+</div>
+
+<h2>3. <code>ivp</code>: el mismo gesto, donde sí paga</h2>
+
+<p>Una EDO <code>dy/dt = F(t,y)</code> con <code>y(0) = Y0</code>. La CP <code>sol</code> guarda los
+pares <code>[t,y]</code> ya resueltos, ordenados por <code>t</code>. Pedir <code>At(t)</code>:</p>
+
+<ul>
+<li>si <code>t</code> ya está en la tabla → <b>HIT</b>, cero integración;</li>
+<li>si no, se integra <b>solo</b> desde el <code>t</code> guardado más cercano por debajo, y el par
+    nuevo se <b>inserta en su sitio</b>.</li>
+</ul>
+
+<p>Con la solución en <code>t = [0 2 4 6]</code>, pedir <code>y(5)</code> integra de 4 a 5 y nada
+más — ni repite 0→4 ni tira el 6 que ya estaba.</p>
+
+<pre><code>function S = extendSol( obj , S )
+  <span class="c">% pone la tabla S al dia con obj.TS: integra SOLO lo que falte</span>
+  for t = obj.TS
+    if any( S(:,1) == t ), continue; end
+    i = find( S(:,1) &lt;= t , 1 , 'last' );          <span class="c">% el guardado mas cercano POR DEBAJO</span>
+    [ y , n ] = obj.rk4( S(i,1) , S(i,2) , t );
+    S = [ S( 1:i , : ) ; t , y ; S( i+1:end , : ) ];   <span class="c">% insertar EN SU SITIO</span>
+  end
+end</code></pre>
+
+<h3>La lección: el atajo no es un handler incremental</h3>
+
+<p>Lo natural, viniendo de <code>facto</code>, sería declarar un incremental. <b>No se puede</b>:
+<code>extendSol</code> necesita leer <code>F</code>, <code>DT</code> y <code>TS</code> <i>del objeto</i>,
+y ésa es justo la puerta que el handler incremental tiene cerrada.</p>
+
+<p>La salida no es renunciar al atajo: es darse cuenta de que el handler <b>sync absoluto</b>
+<code>@(v,o)</code> <i>también recibe el valor viejo</i> — y nada obliga a tirarlo:</p>
+
+<pre><code>obj = obj.Define( 'sol' , @(o) extendSol( o , [ 0 , o.Y0 ] ) , ...   <span class="c">% compute: desde cero</span>
+                  'newtime'       , @(v,o) extendSol( o , v ) , ...   <span class="c">% sync: REUSA v</span>
+                  'changeproblem' , [] );                             <span class="c">% otro problema: fuera</span></code></pre>
+
+<p>La misma función hace de compute y de handler; lo único que cambia es <b>desde dónde parte</b>:
+desde <code>[0,Y0]</code> en el compute, desde la tabla vieja en el handler. Ahí está la frase del
+principio: <b>«absoluto» dice contra qué estado te pones al día, no cuánto trabajo repites.</b></p>
+
+<div class="note key">
+<b>Y hay un premio inesperado: el absoluto subsume N ediciones por construcción.</b> Como
+<code>ivp</code> no declara ningún incremental, el log <i>siempre</i> se funde en un marcador — da igual
+cuántos <code>At()</code> se apilen sin leer. Y al leer, el replay llama a <code>extendSol</code>
+<b>una sola vez</b>, que recorre <code>obj.TS</code> entera y resuelve todos los tiempos pendientes de
+una pasada. El incremental habría hecho N replays; el absoluto hace uno. Se ve en el paso 6 del demo:
+tres integraciones bajo un único MISS.
+<p class="trace" style="margin-top:8px">  [ivp] ODE   y(4): 4000 paso(s) de RK4 desde t=0
+  [ivp] ODE   y(5): 1000 paso(s) de RK4 desde t=4
+  [ivp] ODE   y(6): 1000 paso(s) de RK4 desde t=5
+  [ivp] MISS  "sol" -&gt; calculado</p>
+Y de regalo: <code>MAXLOG</code> deja de importar, porque el log nunca crece.
+</div>
+
+<h3>La trampa que casi se cuela: el compute tiene que ser PURO</h3>
+
+<p>Esta clase estuvo a punto de incumplir la única precondición del patrón que no vigila ninguna
+guarda, y merece contarse tal cual porque el fallo era invisible y la cura, mínima.</p>
+
+<p>La versión obvia de <code>rk4</code> parte el tramo en <code>n</code> pasos iguales:
+<code>n = ceil((t1-t0)/DT)</code>, <code>h = (t1-t0)/n</code>. Parece inofensivo, y significa que
+<b>la rejilla de integración depende de desde dónde arrancas</b>. Con <code>DT=0,1</code>:</p>
+
+<pre><code>P = ivp(f,1,0.1);  P = P.At(1);    P = P.At(1/3);   <span class="c">% y(1) = 2.3197758575243266</span>
+Q = ivp(f,1,0.1);  Q = Q.At(1/3);  Q = Q.At(1);     <span class="c">% y(1) = 2.3197762151071655</span></code></pre>
+
+<p>Los mismos datos, dos valores, según el <b>orden de llegada</b>. Y la consecuencia no es solo un
+resultado incómodo: <code>VerifyCPs</code> calcula «la verdad» <i>recalculando desde cero</i> con los
+tiempos ya ordenados, así que marcaba <code>sol</code> como rancia <b>sin que nada estuviera mal</b>.
+La herramienta que existe para cazar handlers que mienten se ponía a mentir ella.</p>
+
+<p>La cura es anclar la rejilla al <b>origen</b>: paso de tamaño exacto <code>DT</code>, tiempo de cada
+paso calculado como <code>k*DT</code> —no como <code>t0 + k*h</code>— y tiempos pedidos ajustados a esa
+rejilla. Entonces ir del punto <code>i</code> al <code>j</code> ejecuta las mismas operaciones en el
+mismo orden vengas de donde vengas, y por inducción <code>y(j)</code> sale idéntico bit a bit se haya
+integrado de una tirada o en tres tramos.</p>
+
+<div class="note key">
+<b>La pregunta transferible</b>, para cualquier CP que acumule: <i>dos historias distintas que dejan
+los datos en el mismo estado, ¿dan el mismo valor?</i> Si la respuesta es no, lo que tienes no es un
+derivado — es <b>estado colado de contrabando</b> dentro de la caché, y ninguna herramienta del patrón
+podrá ayudarte, porque todas parten de que el compute es la definición de la verdad. El demo original
+se libraba <b>por los pelos</b>: 4, 5 y 6 son múltiplos exactos de <code>DT=1e-3</code> y las rejillas
+coincidían. Bastaba pedir <code>y(0,7071)</code> para verlo.
+</div>
+
+<h3>La sesión</h3>
+
+<div class="step">
+<h4><span class="n">1.</span> [P,y] = P.At(4) — MISS: integra 0 → 4</h4>
+<p class="trace">  [ivp] ODE   y(4): 4000 paso(s) de RK4 desde t=0
+  [ivp] MISS  "sol" -&gt; calculado
+  y(4) = 0.469164   (clava la exacta a 1e-9: 1)</p>
+<p class="small">Con <code>F = cos(t)·y</code> la solución exacta es <code>exp(sin t)</code>, así que
+el demo puede comprobar el resultado de verdad y no solo que «no ha reventado».</p>
+</div>
+
+<div class="step">
+<h4><span class="n">2.</span> [P,y] = P.At(6) — sync que reúsa: integra SOLO 4 → 6</h4>
+<p class="trace">  [ivp] ODE   y(6): 2000 paso(s) de RK4 desde t=4
+  [ivp] RPLAY "sol" -&gt; sync absoluto via newtime
+  y(6) = 0.756226   (clava la exacta a 1e-9: 1)</p>
+<p class="small">2000 pasos y no 6000: aquí es donde el patrón devuelve lo que cuesta. Fíjate en que
+la traza dice <b>sync absoluto</b> y aun así el trabajo es incremental.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">3.</span> [P,y] = P.At(5) — 4 → 5, e insertado en medio</h4>
+<p class="trace">  [ivp] ODE   y(5): 1000 paso(s) de RK4 desde t=4
+  y(5) = 0.383305   (clava la exacta a 1e-9: 1)
+  tiempos guardados: [0 4 5 6]</p>
+<p class="small">El 6 que ya estaba <b>no se recalcula</b> ni se pierde: el par nuevo entra ordenado.
+Ésta es la diferencia entre una tabla y una pila — y la razón de que <code>TS</code> se mantenga
+<code>sort</code>eada: un tiempo temprano deja el trabajo hecho para los tardíos.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">5–6.</span> D = P; P = P.SetY0(2) — otro problema, y el COW</h4>
+<p class="trace">  [ivp] EVENT {changeproblem}: pendientes {-} | caen {sol} | sobreviven {-}
+  P: y(4) = 0.938328   (clava la exacta a 1e-9: 1)
+  D: y(4) = 0.469164   (HIT del valor viejo, con Y0=1)</p>
+<p class="small">Cambiar <code>Y0</code> invalida <i>todo</i> lo integrado: no hay atajo posible, y el
+<code>[]</code> lo dice sin rodeos. Pero solo para <code>P</code>: la copia <code>D</code> conserva su
+solución entera y la sirve con un HIT. Eso es el copy-on-write, gratis, sin una línea en
+<code>ivp.m</code>.</p>
+</div>
+
+<h2>4. <code>collatz</code>: el atajo que sí gana — y la CP compuesta</h2>
+
+<p>Después de <code>facto</code> (pierde) y de <code>ivp</code> (empata, según el trabajo), falta el
+caso limpio: <b>un atajo que gana de calle</b>. Y la razón por la que gana es exactamente la que
+faltaba en <code>facto</code>.</p>
+
+<p>La cadena de Collatz de <code>n</code> es <code>n → n/2</code> si es par, <code>3n+1</code> si es
+impar, hasta llegar a 1. <code>lens(n)</code> cuenta cuántos términos tiene. Calcularla para
+<code>1..N</code> se memoiza sola: como se recorre <code>n</code> <b>ascendente</b>, en cuanto la
+cadena baja por debajo de <code>n</code> ya sabes la respuesta, y ahí paras:</p>
+
+<pre><code>for n = a+1 : b
+  x = n;  c = 0;
+  while x &gt;= n                                  <span class="c">% mientras no caiga en lo conocido</span>
+    if mod(x,2)==0, x = x/2; else, x = 3*x+1; end
+    c = c + 1;
+  end
+  v(n) = c + v(x);                              <span class="c">% lo andado + lo que ya sabiamos</span>
+end</code></pre>
+
+<div class="note key">
+<b>Por qué aquí sí gana: el recompute no puede hacer trampa.</b> <code>facto</code> perdía porque su
+camino caro era <code>cumprod</code>, una llamada vectorizada de MATLAB contra la que un bucle no
+compite. Aquí <b>no existe ningún builtin</b> que calcule esto, así que el camino caro <i>también</i>
+es un bucle — la tabla a pelo cuesta 66,7 ms y por la clase 70,1 ms, prácticamente lo mismo — y el
+atajo gana en la proporción que le toca: <b>27× extendiendo los últimos 2000 de una tabla de 10⁵</b>,
+y <b>100×</b> añadiendo 1000 a una de 10⁶. Ésa es la regla, y es la misma frase de la §7 vista del
+derecho: <i>un atajo gana cuando compite contra otro bucle, no contra una llamada vectorizada</i>.
+</div>
+
+<p>Además es <b>exacto</b>: todo es aritmética entera (<code>n/2</code> y <code>3n+1</code>), así que
+el atajo y el recálculo forzado coinciden <b>bit a bit</b> — no «casi» — y <code>VerifyCPs</code> puede
+comparar con <code>isequaln</code> sin reservas. Los valores intermedios suben mucho más que
+<code>n</code> (para <code>n ≤ 10⁶</code> el máximo es 56.991.483.520, en <code>n=704511</code>), pero
+eso deja un factor 158.000 hasta <code>2⁵³</code>, donde un <code>double</code> dejaría de contar
+enteros exactos. Techo recomendado y documentado: <code>N ≤ 10⁷</code>.</p>
+
+<h3>La CP compuesta: <code>best</code> cae sin declarar nada</h3>
+
+<p>Y aquí está lo que ningún otro ejemplo enseñaba. La clase registra <b>dos</b> CPs:</p>
+
+<pre><code>obj = obj.Define( 'lens' , @(o) collatz.extend( [] , 0 , o.N ) , ...
+                  'grow' , @(v,~,a,b) collatz.extend( v , a , b ) );   <span class="c">% INCREMENTAL</span>
+obj = obj.Define( 'best' , @(o) collatz.champion( o.access('lens') ) );<span class="c">% ...y ningun evento</span></code></pre>
+
+<p><code>best</code> —qué <code>n</code> tiene la cadena más larga— <b>no declara ni un evento</b>. Por
+la regla de la §<i>Las tres políticas</i>, eso significa «insensible: no me toques». Y sin embargo, en
+cuanto la tabla crece, cae:</p>
+
+<p class="trace">  [collatz] EVENT {grow}: pendientes {lens} | caen {best(compuesta)} | sobreviven {-}
+  [collatz] RPLAY "lens" -&gt; 1 incremental(es) sobre el valor viejo
+  [collatz] MISS  "best" -&gt; calculado</p>
+
+<p>Nadie escribió esa regla: el motor <b>descubrió</b> que <code>best</code> salió de <code>lens</code>
+al calcularla —la lectura quedó apuntada como dependencia— y la tira con ella. La tabla lo dice:</p>
+
+<p class="trace">    best  fresh: [1 2] double                eventos: (ninguno: solo MISS/HIT) | sale de: lens
+    lens  fresh: [1 1000] double             eventos: grow-&gt;incremental</p>
+
+<p>Es el único ejemplo del repo con una CP compuesta, y por eso vale doble: la maquinaria de
+dependencias descubiertas solo se ejercitaba en las sondas de la batería. De hecho, escribir este
+ejemplo destapó un fallo cosmético que llevaba meses ahí — la traza sacaba <code>best</code> a la vez
+en <code>caen</code> y en <code>sobreviven</code>, porque la primera pasada de <code>fire</code> la
+clasificaba de insensible y la segunda se la llevaba sin borrarla de la lista. Nadie lo había visto
+porque ningún ejemplo componía.</p>
+
+<h2>5. <code>linsys</code>: el caso práctico, y un valor que no puede viajar</h2>
+
+<p>Los tres anteriores son didácticos. Éste es el que te vas a encontrar de verdad: resolver
+<code>A·x = b</code> cuesta <b>O(n³)</b> la primera vez y <b>O(n²)</b> las siguientes, pero solo si te
+guardas la factorización. Medido con <code>n=800</code>: factorizar 13,5 ms, resolver con la
+factorización cacheada 0,23 ms, y <code>A\b</code> desde cero 9,3 ms — <b>40× por cada término
+independiente</b>.</p>
+
+<pre><code>L = linsys( A );
+x = L \ b;              <span class="c">% MISS: factoriza y guarda</span>
+y = L \ b2;             <span class="c">% HIT: reusa la factorizacion</span>
+z = B / L;              <span class="c">% b/A, con la MISMA factorizacion</span>
+W = inv( L );           <span class="c">% CP compuesta invA</span></code></pre>
+
+<h3>Leer no obliga a reasignar (y por qué el almacén es un handle)</h3>
+
+<p>Fíjate en que <code>x = L\b</code> <b>no devuelve el objeto</b>, mientras que
+<code>facto</code>, <code>ivp</code> y <code>collatz</code> tenían que hacerlo. La diferencia no es
+estilística: aquellos <b>editaban datos</b> al preguntar (subían <code>N</code>, añadían un tiempo), y
+editar en una clase de valor obliga a reasignar. Aquí resolver no toca los datos — solo <i>lee</i> un
+derivado — y el valor calculado se deposita en el <code>cacheHandle</code>, que las copias
+<b>comparten</b>. Así que la factorización queda caliente para el llamante sin devolver nada. Es la
+mejor demostración de por qué el almacén es un handle y no una propiedad más.</p>
+
+<h3>La lección nueva: hay valores que no pueden viajar en un <code>.mat</code></h3>
+
+<p>MATLAB <b>se niega a serializar un <code>decomposition</code></b>. Al guardar avisa
+<i>«Saving a decomposition is not supported»</i>, y al cargar te devuelve —casi en silencio— la
+factorización de una <b>matriz vacía</b>. Quien la guardara en una propiedad normal tendría un objeto
+roto en el fichero sin enterarse.</p>
+
+<div class="note key">
+Como la caché del patrón es <code>Transient</code>, aquí el problema <b>no puede darse</b>: la
+factorización nunca viaja y se rehace en la primera lectura tras el <code>load</code>. Dicho de otro
+modo: <b>la caché transitoria no es una optimización, es el único sitio correcto donde este valor puede
+vivir</b>. Es exactamente la situación del <code>bvh</code> de <code>msh</code>.
+</div>
+
+<h3>Y una política sin atajo, que también hay que saber elegir</h3>
+
+<p><code>dcmp</code> declara <code>'changematrix' → []</code> y se acabó. No existe forma de «poner al
+día» una factorización cuando cambia la matriz: el atajo <b>no existe</b>, y forzar uno sería
+inventárselo. Después de tres ejemplos sobre atajos conviene decirlo claro: <b>no toda CP necesita un
+handler listo</b>, y elegir <code>[]</code> a conciencia es una decisión de diseño, no una dejadez.</p>
+
+<div class="note">
+<b>Una trampa concreta al sobrecargar operadores sobre una clase de éstas.</b> Sería cómodo que
+<code>size(L)</code> devolviera el tamaño de <code>A</code> — pero <code>isscalar</code> se calcula
+<i>con</i> <code>size</code>, y el <code>subsref</code> de <code>cachedOwner</code> empieza
+comprobando <code>isscalar(obj)</code>: con <code>size</code> sobrecargado, <b>toda lectura de CP
+moriría</b> en <code>cachedOwner:notScalar</code>. <code>\</code>, <code>/</code> e <code>inv</code> no
+tienen ese problema. Y ojo al orden de los argumentos: en <code>b/L</code> el objeto es el
+<b>segundo</b>.
+</div>
+
+<h2>6. <code>refreshDefs</code>: que el código gane al fichero</h2>
+
+<p><code>ivp</code> y <code>collatz</code> sobrescriben el gancho que existe justo para las clases
+pensadas para durar:</p>
+
+<pre><code>methods (Access = protected)
+  function obj = refreshDefs( obj )
+    obj = obj.registerCPs();      <span class="c">% el MISMO metodo que llama el constructor</span>
+  end
+end</code></pre>
+
+<p>Sin eso, una EDO guardada hace un año seguiría integrando con el <code>extendSol</code> de
+entonces: las definiciones viajan en el <code>.mat</code> (son dato — las registró el usuario), así que
+<b>la lógica guardada gana a la nueva</b> salvo que alguien la refresque. Con el gancho puesto,
+<code>loadobj</code> vuelve a registrar <i>tus</i> CPs al cargar, y las que el usuario hubiera definido
+<i>ad hoc</i> sobre ese objeto conservan las suyas. Tres líneas.</p>
+
+<p class="small">El detalle completo, en la sección <i>Serialización</i> del
+<a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>.</p>
+
+<h2>7. Los números</h2>
+
+<p>Todo lo anterior es diseño. Esto es lo que mide <code>bench_incremental</code> en R2022a, y no sale
+como uno esperaría — que es justo por lo que vale la pena medir. (Mediana de 3 rondas intercaladas: en
+una sola toma estos tiempos se mueven fácil un 50%, así que fíate de los <b>ratios</b>, no de los
+milisegundos absolutos.)</p>
+
+<h3>Primer golpe: en <code>facto</code>, el atajo pierde contra su propio compute</h3>
+
+<div class="tw">
+<table>
+<tr><th>Una lectura</th><th>recompute</th><th>atajo</th><th>HIT</th></tr>
+<tr><td><code>facto</code>: tabla hasta 2000!</td><td>0,68 ms</td><td><span class="no">0,86 ms</span></td><td>0,22 ms</td></tr>
+<tr><td><code>ivp</code>: y(8), dt=1e-3 (8000 pasos)</td><td>4,53 ms</td><td>2,95 ms</td><td>0,28 ms</td></tr>
+<tr><td><code>collatz</code>: tabla 1..10⁵ (+2000)</td><td>70,1 ms</td><td><span class="ok">2,60 ms</span></td><td>0,22 ms</td></tr>
+</table>
+</div>
+
+<p>Los tres casos del juego, en una línea cada uno: el atajo de <code>facto</code> <b>pierde</b>
+(0,86 contra 0,68), el de <code>ivp</code> gana poco (1,5×) y el de <code>collatz</code> gana
+<b>27×</b> — y 100× si la tabla es de 10⁶ y la extiendes en 1000. La diferencia no está en lo caro que
+sea el cómputo, sino en <b>contra qué compite el atajo</b>.</p>
+
+<p>El atajo de <code>facto</code> no gana poco: cuesta <b>más</b> que recalcularlo todo. La razón no
+tiene nada de exótica y sí mucho de MATLAB. <code>cumprod([1,1:2000])</code> es <b>una sola llamada
+vectorizada</b>; el atajo, en cambio, hace un <code>cumprod</code> corto <i>más</i> una concatenación
+que copia el vector entero, <i>más</i> el recorrido del log. La moraleja vale para cualquier atajo que
+escribas: <b>compites contra el recompute, no contra la nada</b> — y en un lenguaje vectorizado el
+recompute juega con ventaja.</p>
+
+<h3>Segundo golpe: en <code>facto</code>, cachear tampoco compensa</h3>
+
+<div class="tw">
+<table>
+<tr><th>20 consultas crecientes</th><th>con CP</th><th>sin el patrón</th><th></th></tr>
+<tr><td><code>facto</code>: 100!, 200!, … 2000!</td><td>26,2 ms</td><td>0,2 ms</td><td><span class="no">163× peor</span></td></tr>
+<tr><td><code>ivp</code>: y(0,4), … y(8), dt=1e-3</td><td>34,8 ms</td><td>44,3 ms</td><td>1,3× mejor</td></tr>
+</table>
+</div>
+
+<p class="small">«Sin el patrón» = lo que escribirías si no lo tuvieras: para <code>facto</code>, un
+<code>cumprod</code> por consulta; para <code>ivp</code>, integrar 0→t cada vez. <i>No</i> es
+«construir un objeto nuevo cada vez»: eso mediría sobre todo el <code>Define</code>, que hace
+introspección de <code>metaclass</code> y cuesta milisegundos — sería cargarle al <i>baseline</i> un
+coste que no tiene nada que ver con cachear.</p>
+
+<p><b>163× peor.</b> Veinte factoriales resueltos a pelo son 0,2 ms <i>en total</i>; por el patrón,
+26 ms. Todo eso es peaje: ~1,3 ms de despacho + <code>fire</code> + replay por consulta, para ahorrar
+unos microsegundos de <code>cumprod</code>. <code>facto</code> es un ejemplo <b>didáctico</b> —enseña
+el mecanismo con valores que caben en la cabeza— y a la vez un anti-ejemplo perfecto de cuándo
+<i>no</i> usarlo. Su cabecera ya lo avisa; los números le ponen cifra.</p>
+
+<h3>Y entonces, ¿cuándo paga <code>ivp</code>? Dónde está el cruce</h3>
+
+<p>Con <code>dt=1e-3</code>, <code>ivp</code> apenas empata (1,1–1,3×). No porque el patrón sea malo,
+sino porque a ese paso <b>cada consulta tiene poco trabajo debajo</b> (~400 pasos de RK4, ~2 ms) y el
+peaje se lo come. Bajando <code>dt</code> —es decir, poniendo más trabajo bajo cada consulta— se ve la
+curva entera:</p>
+
+<div class="tw">
+<table>
+<tr><th><code>dt</code></th><th>pasos por consulta</th><th>con CP</th><th>sin el patrón</th><th>ahorro</th></tr>
+<tr><td>1e-3</td><td>400</td><td>40,7 ms</td><td>43,8 ms</td><td>1,1×</td></tr>
+<tr><td>3e-4</td><td>1 333</td><td>45,2 ms</td><td>138,3 ms</td><td><span class="ok">3,1×</span></td></tr>
+<tr><td>1e-4</td><td>4 000</td><td>67,0 ms</td><td>438,0 ms</td><td><span class="ok">6,5×</span></td></tr>
+</table>
+</div>
+
+<p>Las dos columnas se comportan de forma distinta, y ahí está todo el asunto. <b>Sin el patrón, el
+coste crece con el trabajo</b> (44 → 138 → 438 ms): cada consulta re-integra desde 0, así que el total
+es <b>cuadrático</b> en el número de consultas. <b>Con CP casi no se mueve</b> (41 → 45 → 67 ms),
+porque lo que domina es el peaje fijo y el trabajo real ya solo se hace una vez por tramo.</p>
+
+<p>El techo de la columna de ahorro es <b>10×</b>, y no es casualidad: con 20 consultas crecientes el
+trabajo evitado es <code>(1+2+…+20)/20 ≈ 10,5</code> veces el necesario. El ratio medido <i>tiende</i>
+a ese 10× a medida que el trabajo por consulta supera al peaje. Con 100 consultas el techo sería
+~50×.</p>
+
+<div class="note key">
+<b>La regla que sale de aquí</b>, más útil que «cachea lo caro»: el peaje del patrón es <b>fijo</b>
+(~1–3 ms por lectura, entre despacho, <code>fire</code> y replay) y el ahorro es <b>proporcional al
+trabajo que evitas</b>. La pregunta, entonces, no es «¿es caro mi cómputo?» sino <b>«¿el trabajo que me
+ahorro es bastante mayor que unos milisegundos?»</b>. <code>ivp</code> con <code>dt=1e-4</code>: sí,
+6,5×. <code>ivp</code> con <code>dt=1e-3</code>: ni sí ni no. <code>facto</code>: rotundamente no, en
+cualquier ajuste.
+</div>
+
+<div class="note">
+<b>Un control que conviene tener a mano:</b> el mismo RK4 escrito como función suelta, fuera de la
+clase, tarda 3,6 ms en integrar 0→8, frente a los 5,8 ms del camino completo por el patrón. Meter el
+integrador en un <code>classdef</code> <b>no</b> penaliza — la diferencia es el despacho de la lectura,
+que se paga <b>una vez por llamada y no por paso</b>. Si alguna vez sospechas que «las clases de MATLAB
+son lentas», mide esto antes: casi siempre el culpable es el número de llamadas, no dónde vive el
+código.
+</div>
+
+<h2>8. Cómo elegir, en una tabla</h2>
+
+<div class="tw">
+<table>
+<tr><th>Si…</th><th>usa</th><th>por qué</th></tr>
+<tr><td>todo lo que el atajo necesita cabe en los <b>args del evento</b></td>
+    <td>incremental <code>@(v,~,args)</code></td>
+    <td>es el más barato y se replica edición a edición sin ambigüedad</td></tr>
+<tr><td>el atajo necesita <b>leer el objeto</b></td>
+    <td>sync absoluto <code>@(v,o)</code> que reúsa <code>v</code></td>
+    <td>es la única forma correcta: el incremental vería el estado final de todas las ediciones</td></tr>
+<tr><td>se pueden apilar <b>muchas</b> ediciones sin leer</td>
+    <td>sync absoluto (o incremental <b>y</b> absoluto)</td>
+    <td>N ediciones = 1 llamada, y <code>MAXLOG</code> deja de importar</td></tr>
+<tr><td>el compute está <b>vectorizado</b> y es rápido</td>
+    <td>ninguno: <code>[]</code></td>
+    <td>el atajo perdería, y encima hay que mantenerlo (caso <code>facto</code>)</td></tr>
+<tr><td>el compute es un <b>bucle</b> sin builtin que lo sustituya</td>
+    <td>el atajo que corresponda, con confianza</td>
+    <td>compites contra otro bucle, así que el ahorro es proporcional al trabajo evitado (caso
+        <code>collatz</code>: 27–100×)</td></tr>
+<tr><td>el trabajo que evitas no llega a <b>unos milisegundos</b></td>
+    <td>ni siquiera cachear</td>
+    <td>el peaje va de ~0,3 ms (un HIT pelado) a ~1–3 ms (lectura con evento y replay), y se
+        come el ahorro</td></tr>
+</table>
+</div>
+
+<p>Y la regla que engloba a todas: <b>mide antes de decidir, y mide contra la alternativa real</b> — no
+contra «no tener nada», sino contra el código que escribirías sin el patrón.</p>
+
+<p>Para eso hay dos caminos, y conviene saber cuál usar. <code>bench_incremental</code> está escrito
+para copiarse: sustituye <code>facto</code>/<code>ivp</code>/<code>collatz</code> por tu clase y
+quédate con los ratios — es lo que hay que hacer cuando comparas <b>dos diseños</b>. Y para la
+pregunta de todos los días —<i>«esta CP concreta, ¿compensa?»</i>— está
+<code><b>ProfileCPs</b></code>, que viene en la base y no hay que escribir:</p>
+
+<pre><code>ProfileCPs( o )    <span class="c">% trabajo | MISS | HIT | ahorro por lectura | memoria | veredicto</span></code></pre>
+
+<p>Separa las dos preguntas que este documento entero ha ido desenredando: si <code>trabajo &lt;
+HIT</code>, eso no debería ser una CP; y si lo es, el ahorro de guardarla es <code>MISS − HIT</code>
+<i>por lectura extra entre ediciones</i>. Sobre <code>collatz</code> dice <code>lens → PAGA (799×)</code>
+y sobre <code>cart</code>, las cuatro <code>NO DEBERIA SER CP</code>. El detalle, en la §9 del
+<a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>.</p>
+
+<p>Y la comprobación que cierra cualquiera de las cinco decisiones, porque un atajo que miente no
+falla — sirve otra cosa:</p>
+
+<pre><code>assert( isempty( obj.VerifyCPs() ) , 'hay CPs rancias' )</code></pre>
+
+<hr>
+<p class="small">Clases: <code>dev\facto.m</code>, <code>dev\ivp.m</code>, <code>dev\collatz.m</code>,
+<code>dev\linsys.m</code> · sesiones: <code>dev\factoDemo.m</code>, <code>dev\ivpDemo.m</code>,
+<code>dev\collatzDemo.m</code>, <code>dev\linsysDemo.m</code> · medidas:
+<code>dev\bench_incremental.m</code> · mecánica interna:
+<a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a> · decidir
+políticas: <a href="serie_TUTORIAL.html" style="color:var(--acc2)"><code>serie_TUTORIAL.html</code></a>.
+Las trazas son salida real de los demos (que además están en los <i>goldens</i> de
+<code>test_cache</code>); los tiempos, mediana de 3 rondas en R2022a.</p>
+
+</div>
+</body>
+</html>

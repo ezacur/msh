@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>serie — diseñar la caché de una clase, decisión a decisión</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#ffffff; --ink:#1c1b19; --dim:#6b6862; --line:#e2ded6;
+  --code-bg:#f4f2ee; --com:#7c8f7a; --acc:#8a5a2b; --acc2:#2f6b7a;
+  --fresh:#2f7a4f; --pend:#a5761b; --gone:#9a3b3b; --chip:#f0eee9;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17171a; --panel:#1e1e22; --ink:#e8e6e1; --dim:#9b978f; --line:#33333a;
+    --code-bg:#15151a; --com:#7f9c7c; --acc:#d7a06a; --acc2:#7fbecb;
+    --fresh:#63c68c; --pend:#dcae57; --gone:#e0797a; --chip:#26262c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:980px;margin:0 auto;padding:32px 22px 90px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.32rem;margin:52px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:30px 0 6px;color:var(--acc)}
+p,li{max-width:74ch}
+.lede{color:var(--dim);font-size:1.05rem;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:.9em;
+  background:var(--chip);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-left:3px solid var(--acc2);
+  border-radius:6px;padding:12px 14px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:.845rem;line-height:1.5}
+pre .c{color:var(--com);font-style:italic}
+.note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:6px;padding:12px 16px;margin:16px 0}
+.note b{color:var(--acc)}
+.key{border-left-color:var(--acc2)}
+.key b{color:var(--acc2)}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:520px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0}
+.step h4{margin:0 0 8px;font-size:.98rem;font-family:ui-monospace,Consolas,monospace}
+.step h4 .n{display:inline-block;min-width:1.9em;color:var(--dim);font-weight:400}
+.trace{font-family:ui-monospace,Consolas,monospace;font-size:.8rem;color:var(--dim);
+  white-space:pre-wrap;margin:8px 0 0;padding-left:10px;border-left:2px dotted var(--line)}
+.small{font-size:.86rem;color:var(--dim)}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+.ok{color:var(--fresh);font-weight:600}
+.no{color:var(--gone);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1><code>serie</code>: diseñar la caché de una clase, decisión a decisión</h1>
+<p class="lede">Una lista de números. Se le pueden hacer dos cosas: <b>añadir un valor</b> y
+<b>quitar el último</b>. Nada más. Con un dominio tan pequeño, todo lo que se discuta aquí es
+<b>política de caché</b> — que es justo lo que hay que aprender a decidir.</p>
+
+<div class="note">
+<b>Ficheros.</b> <code>dev\serie.m</code> (la clase) y <code>dev\serieDemo.m</code> (la sesión de
+abajo, con trazas reales). Para correrla:
+<pre><code>addpath('C:\repos\msh','C:\repos\msh\dev');  serieDemo</code></pre>
+<span class="small">La mecánica interna del patrón está en
+<a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>; el uso
+línea a línea de otra clase, en <a href="route_TUTORIAL.html" style="color:var(--acc2)"><code>route_TUTORIAL.html</code></a>;
+y <b>cuándo un atajo compensa de verdad</b> (con medidas), en
+<a href="incremental_TUTORIAL.html" style="color:var(--acc2)"><code>incremental_TUTORIAL.html</code></a>.
+Aquí se explica <b>cómo se decide</b> lo que va en cada <code>Define</code>.</span>
+</div>
+
+<div class="note key">
+<b>La regla de oro, por si no lees nada más.</b> <b>Empieza conservador.</b> Escribe primero la
+versión en la que <i>cualquier</i> edición invalida <i>todas</i> las CPs: es correcta por
+construcción, no tiene handlers que puedan mentir, y ya te da lo que más vale del patrón (calcular
+solo lo que se pide, una vez). Después, y solo si has <b>medido</b> que hace falta, añade atajos
+<b>de uno en uno</b>, verificando cada uno con <code>VerifyCPs</code>. Cada atajo que añades es una
+promesa que alguien tendrá que mantener.
+</div>
+
+<h2>1. El dominio, entero</h2>
+
+<pre class="m"><code>  properties (SetAccess = private)
+    X = []          <span class="c">% los numeros, 1xN</span>
+  end
+
+  function o = Push( o , v )
+    o.X( end+1 ) = v;
+    o = o.fire( { 'push' , 'changedata' } , v , numel( o.X ) );
+  end
+
+  function o = Pop( o )
+    if isempty( o.X ), error('serie:empty','la serie esta vacia.'); end
+    x = o.X( end );  o.X( end ) = [];
+    o = o.fire( { 'pop' , 'changedata' } , x , numel( o.X ) );
+  end</code></pre>
+
+<p><b>Escritura cerrada</b> (<code>SetAccess = private</code>): obliga a que toda edición pase por
+estos dos métodos, y como los dos terminan en <code>fire</code>, no queda ninguna vía de cambiar los
+datos sin avisar. Es la única forma de que el resto del diseño se sostenga.</p>
+
+<h3>El vocabulario de eventos: dos específicos y uno general</h3>
+
+<pre class="m"><code>  CP_EVENTS = { 'push' , 'pop' , 'changedata' }</code></pre>
+
+<p>Los dos específicos dicen <i>qué</i> ha pasado; el general dice <i>que ha pasado algo</i>. El
+general no es decorativo: es lo que permite escribir <b>"me da igual qué haya sido, tírame"</b> sin
+enumerar los editores — y eso inmuniza a esa CP contra <b>editores futuros</b>. El día que la clase
+gane un <code>Clear()</code> o un <code>Sort()</code>, las CPs que declaren <code>changedata</code>
+seguirán siendo correctas sin tocarlas; las que enumeren <code>push</code> y <code>pop</code>, no.</p>
+
+<div class="note">
+<b>Y una decisión que se toma aquí, no en <code>Define</code>: qué viaja en los argumentos del
+evento.</b> <code>Push</code> pasa <code>(v, numel(o.X))</code> — el valor añadido <i>y</i> cuántos
+quedan. Parece redundante (¿no puede el handler mirar la lista?) y es justo lo contrario: es
+<b>obligatorio</b>. Un handler incremental <b>no puede leer el objeto</b>, y la sección 5 explica por
+qué. Lo que no viaje en los argumentos, el atajo no lo sabrá nunca.
+</div>
+
+<h2>2. Los tres derivados, y por qué esos</h2>
+
+<p>Se cachean tres cosas, elegidas porque cada una pide una política distinta. Ése es el ejercicio:
+mirar cada derivado y preguntarse <b>qué le hace cada edición</b>.</p>
+
+<div class="tw"><table>
+<tr><th>Derivado</th><th>al añadir un valor</th><th>al quitar el último</th></tr>
+<tr><td><code>avg</code> — la media</td>
+    <td class="ok">se actualiza en O(1): <code>m + (v−m)/n</code></td>
+    <td>hay fórmula, pero (§5) no se puede usar: <b>sync absoluto</b></td></tr>
+<tr><td><code>top</code> — el máximo</td>
+    <td class="ok">se actualiza en O(1): <code>max(t,v)</code></td>
+    <td class="no">imposible: el que sale <i>podía ser</i> el máximo → <b>invalidar</b></td></tr>
+<tr><td><code>sorted</code> — la lista ordenada</td>
+    <td class="no">no hay atajo barato</td>
+    <td class="no">no hay atajo barato</td></tr>
+</table></div>
+
+<p><code>top</code> es el caso más instructivo: <b>el atajo existe en una dirección y no en la
+otra</b>. Añadir sabe comparar; quitar no sabe quién era el segundo. Un diseño que no distinga las
+dos direcciones acaba o recalculando de más, o sirviendo datos rancios.</p>
+
+<p class="small">¿Y por qué no se cachea <code>numel(X)</code>, o la suma? Porque son más baratos de
+calcular que de preguntar. La sección 7 pone los números.</p>
+
+<h2>3. La versión conservadora (empieza aquí)</h2>
+
+<p>Ésta es la respuesta a "quiero que cada evento anule todas las CPs". <b>Se declara en cada
+<code>Define</code> el evento general con <code>[]</code></b>, y ya está:</p>
+
+<pre class="m"><code>    function o = Safe( o )
+      o = o.Define( 'avg'    , @(s) sum( s.X ) / max( numel( s.X ) , 1 ) , 'changedata' , [] );
+      o = o.Define( 'top'    , @(s) max( [ -inf , s.X ] )                , 'changedata' , [] );
+      o = o.Define( 'sorted' , @(s) sort( s.X )                          , 'changedata' , [] );
+    end</code></pre>
+
+<p>Tres reglas y ninguna excepción:</p>
+<ol>
+<li><b>Un solo evento en el vocabulario basta</b> para esta versión (<code>changedata</code>). Los
+    específicos pueden existir para el futuro; si nadie los declara, no hacen nada.</li>
+<li><b>Todas las CPs lo declaran, y con <code>[]</code>.</b> <code>[]</code> significa
+    <i>invalidar</i>: el valor se tira y se recalculará cuando alguien lo pida.</li>
+<li><b>Los editores lo disparan siempre</b> — y aquí ni siquiera hacen falta argumentos:
+    <code>o.fire({'changedata'})</code> es suficiente, porque nadie va a usarlos.</li>
+</ol>
+
+<div class="note">
+<b>Lo que NO hay que hacer, aunque parezca equivalente:</b> dejar una CP <b>sin declarar
+eventos</b>. Eso no significa "conservador", significa <b>insensible</b>: la CP sobrevive a todas las
+ediciones y sirve un valor rancio para siempre. Es el error más fácil de cometer, y por eso
+<code>Define</code> avisa (<code>cachedOwner:noEvents</code>) cuando una CP lee datos del objeto y no
+declara ni un evento.
+</div>
+
+<h3>Qué garantiza esta versión</h3>
+<ul>
+<li><b>No puede servir datos rancios</b> por culpa de la caché: no hay handler que pueda equivocarse,
+    solo hay "tíralo".</li>
+<li><b>Sobrevive a que alguien añada un editor nuevo</b> y se olvide de pensar en la caché — mientras
+    dispare el evento general.</li>
+<li><b>Sigue siendo perezosa</b>: no calcula nada hasta que se lo piden, y no lo repite hasta la
+    siguiente edición. Que es, en la mayoría de las clases, el 90% de lo que se buscaba.</li>
+</ul>
+
+<h3>La sesión, con esta versión</h3>
+
+<div class="step">
+<h4><span class="n">0.</span> S = serie().Safe()</h4>
+<p class="small">Registrar no calcula nada. La tabla muestra las tres CPs y su política — desde que
+la tabla dice <code>-&gt;invalida</code>, el diseño se lee de un vistazo.</p>
+<p class="trace">  CPs (3) -- leer S.&lt;n&gt; | recalcular S.&lt;n&gt;_ | control S.CP.&lt;n&gt; :
+  (eventos en orden de PRIORIDAD; incremental = atajo por edicion, sync = absoluto, invalida = cae)
+    avg     (sin calcular)                     eventos: changedata-&gt;invalida
+    sorted  (sin calcular)                     eventos: changedata-&gt;invalida
+    top     (sin calcular)                     eventos: changedata-&gt;invalida</p>
+<p class="small">La letra del encabezado (<code>S.&lt;n&gt;</code>) sale de la <b>clase</b>, no de tu
+variable.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">1–3.</span> S = S.Push(4); S = S.Push(8);  luego S.avg dos veces</h4>
+<p class="small">Editar no calcula: los dos <code>EVENT</code> no tienen nada que tirar porque no hay
+nada cacheado. La primera lectura es un <code>MISS</code> (calcula y guarda); la segunda, un
+<code>HIT</code>. <b>Eso es todo lo que hace falta para que la caché ya valga la pena.</b></p>
+<p class="trace">  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+  [serie] EVENT {push+changedata}: pendientes {-} | caen {-} | sobreviven {-}
+  [serie] MISS  "avg" -&gt; calculado
+  avg = 6
+  [serie] HIT   "avg"
+  avg = 6</p>
+</div>
+
+<div class="step">
+<h4><span class="n">4.</span> S = S.Push(6)</h4>
+<p class="small">Una edición <b>tira</b> lo que hubiera. Fíjate en que solo cae <code>avg</code>:
+las otras dos ni se habían calculado, así que no hay nada que invalidar. Invalidar es gratis.</p>
+<p class="trace">  [serie] EVENT {push+changedata}: pendientes {-} | caen {avg} | sobreviven {-}</p>
+</div>
+
+<h2>4. Lo que ya has ganado sin un solo atajo</h2>
+
+<ul>
+<li><b>Pereza</b>: <code>sorted</code> no se ha calculado nunca porque nadie lo ha pedido.</li>
+<li><b>Reúso</b>: entre dos ediciones, leer mil veces cuesta un cálculo.</li>
+<li><b>Copy-on-write</b>: si copias el objeto y editas la copia, el original <b>conserva su
+    caché</b>. Es gratis y viene de serie.</li>
+<li><b>Un sitio donde mirar</b>: <code>S.CP</code> dice qué hay calculado y qué política tiene cada
+    cosa.</li>
+</ul>
+
+<p>Si el perfil dice que con esto sobra — y lo dice más veces de las que uno espera —, <b>el diseño
+está terminado</b>. Lo que sigue es optimización, con su precio.</p>
+
+<h2>5. Los atajos, uno a uno</h2>
+
+<pre class="m"><code>    function o = Fast( o )
+      o = o.Define( 'avg' , @(s) sum( s.X ) / max( numel( s.X ) , 1 ) , ...
+                    'push' , @(m,~,v,n) m + ( v - m ) / n , ...              <span class="c">% INCREMENTAL</span>
+                    'pop'  , @(~,s) sum( s.X ) / max( numel( s.X ) , 1 ) );  <span class="c">% SYNC absoluto</span>
+      o = o.Define( 'top' , @(s) max( [ -inf , s.X ] ) , ...
+                    'push' , @(t,~,v,~) max( t , v ) , ...                   <span class="c">% INCREMENTAL</span>
+                    'pop'  , [] );                                           <span class="c">% INVALIDA</span>
+      o = o.Define( 'sorted' , @(s) sort( s.X ) , 'changedata' , [] );       <span class="c">% sin atajo</span>
+    end</code></pre>
+
+<h3>5.1 · El handler incremental no puede mirar el objeto</h3>
+
+<p>Es <b>la</b> regla que hay que interiorizar, y explica la forma de todo lo demás. El motor no
+guarda estados intermedios: guarda <b>ediciones</b>. Cuando llega el momento de ponerse al día,
+recorre las ediciones pendientes aplicando el handler una por una — pero el objeto que le pasa es el
+de <b>ahora</b>, el de después de todas. Un handler que lea la lista vería el estado final en todas
+las iteraciones y daría un resultado <b>mal, y en silencio</b>.</p>
+
+<p>Por eso el segundo argumento se declara <code>~</code>, y por eso <code>Push</code> pasa
+<code>n</code> como argumento del evento: <b>cada edición lleva su propio <code>n</code></b>, y por
+eso una cadena de cinco <code>Push</code> sin leer se replica bien:</p>
+
+<pre class="m"><code>S = serie().Fast();  S = S.Push(2);  S = S.Push(4);  v = S.avg;   <span class="c">% 3</span>
+S = S.Push(6);  S = S.Push(8);  S = S.Push(10);                   <span class="c">% tres pendientes</span>
+S.avg        <span class="c">% 6   -- (3+(6-3)/3)=4, (4+(8-4)/4)=5, (5+(10-5)/5)=6</span>
+mean([2 4 6 8 10])   <span class="c">% 6   -- la verdad</span></code></pre>
+
+<p class="small">Si lo intentas de la otra forma —<code>@(m,s,v) (m*(numel(s.X)-1)+v)/numel(s.X)</code>,
+que es la fórmula "natural"— <code>Define</code> te lo <b>rechaza</b> en el momento del registro
+(<code>cachedOwner:incrementalUsesOwner</code>), porque el cuerpo nombra el argumento del dueño. No es
+una manía: esa forma acierta con una edición pendiente y falla con dos, o sea, pasa las pruebas de
+juguete y falla en producción.</p>
+
+<h3>5.2 · Un solo atajo incremental por CP</h3>
+
+<p><code>avg</code> también tendría fórmula al quitar: <code>(m·(n+1) − x)/n</code>. Pero el replay
+sigue <b>una</b> cadena, así que el motor solo admite un handler incremental por CP (y
+<code>Define</code> rechaza el segundo). La salida es escribir el otro como <b>sync absoluto</b>
+<code>@(v,o)</code>: "ponme al día mirando el objeto tal como está ahora". Un sync <i>sí</i> puede
+leer el objeto — es su trabajo — y subsume cualquier número de ediciones acumuladas de golpe.</p>
+
+<div class="note">
+<b>Cuándo elegir sync y cuándo incremental.</b> Incremental si el coste depende del <i>tamaño de la
+edición</i> (añadir un número: O(1) pase lo que pase). Sync si depende del <i>tamaño del objeto</i>
+pero aun así es más barato que el <code>compute</code>, o si te ahorra pensar. Y si no es más barato
+que recalcular: <code>[]</code>, sin complejos.
+</div>
+
+<h3>5.3 · El máximo: el atajo existe en una dirección</h3>
+
+<p><code>max(t,v)</code> al añadir es correcto y O(1). Al quitar no hay nada que hacer: si el que sale
+era el máximo, el nuevo máximo puede ser cualquiera de los que quedan. Se declara <code>[]</code> y
+se acabó. <b>Que un derivado tenga atajo no significa que lo tenga siempre</b>, y forzarlo es la
+forma más rápida de escribir un handler que miente.</p>
+
+<h3>5.4 · Los casos degenerados deciden si el atajo es válido</h3>
+
+<p>Dos detalles del código de arriba que parecen cosméticos y no lo son:</p>
+
+<div class="tw"><table>
+<tr><th>Escrito así</th><th>En vez de</th><th>Por qué</th></tr>
+<tr><td><code>sum(X)/max(numel(X),1)</code></td><td><code>mean(X)</code></td>
+    <td><code>mean([])</code> es <code>NaN</code>, y entonces el primer <code>Push</code> haría
+        <code>NaN + (v−NaN)/1 = NaN</code>: el atajo <b>miente</b> en la lista vacía. Definiendo que
+        la media de la lista vacía es <b>0</b>, el atajo es correcto también ahí.</td></tr>
+<tr><td><code>max([-inf, X])</code></td><td><code>max(X)</code></td>
+    <td><code>max([])</code> es <code>[]</code>, y <code>max([],5)</code> devuelve <code>[]</code>
+        (comprobado): el atajo se comería el primer valor. Con <code>−inf</code> como máximo de la
+        lista vacía, <code>max(−inf,v)=v</code>.</td></tr>
+</table></div>
+
+<p><b>La lección general:</b> el caso degenerado (lista vacía, un solo elemento) es donde los atajos
+se rompen, y muchas veces <b>puedes elegir la definición del <code>compute</code> para que el atajo
+sea válido</b>. Elegirla es parte del diseño, no un detalle de implementación.</p>
+
+<h3>La sesión, con esta versión</h3>
+
+<div class="step">
+<h4><span class="n">5.</span> F = serie().Fast(); F = F.Push(4); F = F.Push(8); F.avg, F.top</h4>
+<p class="small">La tabla ya cuenta el diseño entero: quién tiene atajo, de qué tipo, y en qué orden
+de prioridad.</p>
+<p class="trace">    avg     fresh: 6                           eventos: push-&gt;incremental, pop-&gt;sync
+    sorted  (sin calcular)                     eventos: changedata-&gt;invalida
+    top     fresh: 8                           eventos: push-&gt;incremental, pop-&gt;invalida</p>
+</div>
+
+<div class="step">
+<h4><span class="n">6–7.</span> F = F.Push(6);  luego F.avg</h4>
+<p class="small">Ahora <code>avg</code> y <code>top</code> quedan <b>pendientes</b> (con la edición
+anotada) en vez de caer; <code>sorted</code>, que no tiene atajo, cae. Al leer, el replay aplica el
+incremental sobre el valor viejo: <b>no se recorre la lista</b>.</p>
+<p class="trace">  [serie] EVENT {push+changedata}: pendientes {avg, top} | caen {-} | sobreviven {-}
+    avg     (pendiente: 1 edit(s) en el log)   eventos: push-&gt;incremental, pop-&gt;sync
+    sorted  (sin calcular)                     eventos: changedata-&gt;invalida
+    top     (pendiente: 1 edit(s) en el log)   eventos: push-&gt;incremental, pop-&gt;invalida
+  [serie] RPLAY "avg" -&gt; 1 incremental(es) sobre el valor viejo
+  avg = 6   (verdad: 6)</p>
+</div>
+
+<div class="step">
+<h4><span class="n">8.</span> F = F.Pop()</h4>
+<p class="small">La asimetría, en una traza: <code>avg</code> queda pendiente (su sync la pondrá al
+día) y <code>top</code> <b>cae</b>. Al leer, cada una toma su camino: una se sincroniza, la otra se
+recalcula.</p>
+<p class="trace">  [serie] EVENT {pop+changedata}: pendientes {avg} | caen {top} | sobreviven {-}
+  [serie] RPLAY "avg" -&gt; sync absoluto via pop
+  [serie] MISS  "top" -&gt; calculado
+  avg = 6 , top = 8</p>
+</div>
+
+<h2>6. Verificar, que es la otra mitad del trabajo</h2>
+
+<p>Un atajo es una <b>afirmación</b>: "esto da lo mismo que recalcular, pero más barato". Nadie la
+comprueba en caliente — sería tan caro como no tener caché. Se comprueba a mano:</p>
+
+<pre class="m"><code>F.avg      <span class="c">% lo que sirve la cache</span>
+F.avg_     <span class="c">% lo mismo, RECALCULADO a la fuerza: si no coinciden, el handler esta mal</span>
+
+VerifyCPs( F )   <span class="c">% lo hace para TODAS las CPs con valor, de una vez</span></code></pre>
+
+<p class="trace">  VerifyCPs de serie: 2 CP(s) con valor, 0 discrepa(n)
+    avg  fresh     OK
+    top  fresh     OK</p>
+
+<p>Y así se ve un handler que miente. Éste calcula <code>(m+v)/2</code> en vez de la media
+incremental — una confusión de lo más común, y <b>no falla nunca</b>:</p>
+
+<pre class="m"><code>W = W.Define( 'malo' , @(s) sum(s.X)/max(numel(s.X),1) , ...
+              'push' , @(m,~,v,n) (m+v)/2 );          <span class="c">% NO es la media incremental</span></code></pre>
+
+<p class="trace">  la cache sirve 8, la verdad es 6 -- y no falla ni avisa nadie
+  VerifyCPs de serie: 1 CP(s) con valor, 1 discrepa(n)
+  ! malo  fresh     sirve 8 | verdad 6
+  Una discrepancia = la cache sirve algo distinto de lo que da su compute:
+  o un handler MIENTE, o a esa CP le falta declarar el evento que la afecta.</p>
+
+<div class="note">
+<b>Ponlo en un test, no en la cabeza.</b> Después de una tanda de ediciones representativa:
+<pre><code>assert( isempty( obj.VerifyCPs() ) , 'hay CPs rancias' )</code></pre>
+Caza las dos cosas que ninguna guarda automática puede ver: el handler que <b>miente</b> (el que
+<i>revienta</i> ya se detecta solo) y el <b>evento que se te olvidó declarar</b>.
+</div>
+
+<h2>7. ¿Y merecía la pena? Los números</h2>
+
+<p>Medido en esta máquina (R2022a), en la misma sesión:</p>
+
+<div class="tw"><table>
+<tr><th>Operación</th><th>Coste</th><th>Lectura</th></tr>
+<tr><td>Leer una CP cacheada (<code>S.avg</code>, un HIT)</td><td>~0,1–0,3 ms</td>
+    <td>el peaje de <code>subsref</code>: lo pagas <b>siempre</b></td></tr>
+<tr><td><code>mean</code> de 5 números</td><td>3 µs</td>
+    <td class="no">cachearlo es <b>pérdida neta</b>, por 100</td></tr>
+<tr><td><code>mean</code> de 1.000.000 de números</td><td>131 µs</td>
+    <td>≈ lo que cuesta <i>preguntar</i>: sigue sin compensar claramente</td></tr>
+<tr><td><code>sort</code> de 1.000.000 de números</td><td>51 ms</td>
+    <td class="ok">aquí sí: 400× el coste de preguntar</td></tr>
+</table></div>
+
+<p>Así que la conclusión honesta de este ejemplo es incómoda y conviene decirla: <b>en una clase como
+<code>serie</code>, cachear la media no compensa</b> salvo con listas enormes, y aun así poco. El que
+justifica todo el aparato es <code>sorted</code>. Los ejemplos de este tutorial cachean cosas baratas
+<b>a propósito</b>, para que los valores quepan en la cabeza — no son una recomendación.</p>
+
+<div class="note">
+<b>La regla gruesa:</b> cachea lo que tarde <b>≳0,5 ms</b>. Por debajo de eso, preguntar cuesta más
+que calcular, y además pagas complejidad: un estado más que puede quedarse rancio, una política que
+mantener y un handler que puede mentir.
+</div>
+
+<h2>8. La checklist</h2>
+
+<ol>
+<li><b>Cierra la escritura</b> de los datos y haz que todo editor termine en <code>fire</code>,
+    de específico a general.</li>
+<li><b>Empieza conservador</b>: un evento general, y todas las CPs con <code>[]</code>.</li>
+<li><b>Mide.</b> Si sobra con eso, has terminado.</li>
+<li>Para cada derivado que no sobre, pregúntate <b>qué le hace cada edición</b> — y acepta que la
+    respuesta puede ser distinta en cada dirección.</li>
+<li>Escribe el atajo pasando por los <b>argumentos del evento</b> todo lo que necesite: el handler
+    incremental <b>no puede mirar el objeto</b>.</li>
+<li>Mira el <b>caso degenerado</b> (vacío, un elemento) y, si puedes, elige la definición del
+    <code>compute</code> que hace válido el atajo.</li>
+<li><b>Verifica</b> con <code>VerifyCPs</code>, y déjalo puesto en un test.</li>
+<li><b>Mide el atajo contra el recompute</b>, no contra la nada: en un lenguaje vectorizado el
+    recompute juega con ventaja, y hay atajos que <i>pierden</i>
+    (<a href="incremental_TUTORIAL.html" style="color:var(--acc2)"><code>facto</code></a> es el
+    ejemplo medido). Un atajo que no gana es complejidad regalada.</li>
+<li>Mira la tabla <code>obj.CP</code>: ahí está tu diseño escrito. Si no se entiende leyéndola, no
+    se entenderá dentro de seis meses.</li>
+</ol>
+
+<hr>
+<p class="small">Clase: <code>dev\serie.m</code> · sesión: <code>dev\serieDemo.m</code> · mecánica
+interna: <a href="cache_TUTORIAL.html" style="color:var(--acc2)"><code>cache_TUTORIAL.html</code></a>.
+Todas las trazas y los números de este documento son <b>salida real</b> de esa sesión.</p>
+
+</div>
+</body>
+</html>

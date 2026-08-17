@@ -1,0 +1,2116 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cacheHandle + cacheProxy — guía didáctica</title>
+<style>
+:root{
+  --bg:#fbfaf8; --panel:#ffffff; --ink:#1c1b19; --dim:#6b6862; --line:#e2ded6;
+  --code-bg:#f4f2ee; --com:#7c8f7a; --acc:#8a5a2b; --acc2:#2f6b7a;
+  --fresh:#2f7a4f; --pend:#a5761b; --gone:#9a3b3b; --chip:#f0eee9;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#17171a; --panel:#1e1e22; --ink:#e8e6e1; --dim:#9b978f; --line:#33333a;
+    --code-bg:#15151a; --com:#7f9c7c; --acc:#d7a06a; --acc2:#7fbecb;
+    --fresh:#63c68c; --pend:#dcae57; --gone:#e0797a; --chip:#26262c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:980px;margin:0 auto;padding:32px 22px 90px}
+h1{font-size:1.9rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.32rem;margin:52px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--line)}
+h3{font-size:1.05rem;margin:30px 0 6px;color:var(--acc)}
+p,li{max-width:74ch}
+.lede{color:var(--dim);font-size:1.05rem;margin:0 0 8px}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;font-size:.9em;
+  background:var(--chip);padding:1px 5px;border-radius:4px}
+pre{background:var(--code-bg);border:1px solid var(--line);border-left:3px solid var(--acc2);
+  border-radius:6px;padding:12px 14px;overflow-x:auto;margin:12px 0}
+pre code{background:none;padding:0;font-size:.845rem;line-height:1.5}
+pre .c{color:var(--com);font-style:italic}
+.note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--acc);
+  border-radius:6px;padding:12px 16px;margin:16px 0}
+.note b{color:var(--acc)}
+.tw{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:520px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+td code{white-space:nowrap}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:16px 0}
+.step h4{margin:0 0 8px;font-size:.98rem;font-family:ui-monospace,Consolas,monospace}
+.step h4 .n{display:inline-block;min-width:1.9em;color:var(--dim);font-weight:400}
+.store{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 4px}
+.ent{border:1px solid var(--line);border-radius:6px;padding:4px 9px;font-size:.78rem;
+  font-family:ui-monospace,Consolas,monospace;background:var(--chip)}
+.ent b{font-weight:600}
+.ent.f{border-left:3px solid var(--fresh)} .ent.p{border-left:3px solid var(--pend)}
+.ent.g{border-left:3px solid var(--gone);opacity:.62;text-decoration:line-through}
+.ent .st{color:var(--dim)}
+.trace{font-family:ui-monospace,Consolas,monospace;font-size:.8rem;color:var(--dim);
+  white-space:pre-wrap;margin:8px 0 0;padding-left:10px;border-left:2px dotted var(--line)}
+.k{display:flex;gap:16px;flex-wrap:wrap;font-size:.8rem;color:var(--dim);margin:6px 0 0}
+.tl{border-collapse:collapse;font-size:.74rem;font-family:ui-monospace,Consolas,monospace;min-width:700px}
+.tl th,.tl td{border:1px solid var(--line);padding:3px 7px;text-align:center;white-space:nowrap}
+.tl th{color:var(--dim);font-weight:400;font-size:.7rem}
+.tl td:first-child{text-align:right;color:var(--dim)}
+.tl .F{color:var(--fresh);font-weight:600}
+.tl .P{color:var(--pend);font-weight:600}
+.tl .A{color:var(--gone);opacity:.55}
+details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 16px;margin:12px 0}
+details summary{cursor:pointer;font-weight:600;color:var(--acc)}
+details[open] summary{margin-bottom:8px}
+svg{max-width:100%;height:auto;display:block;margin:18px auto}
+.sv-l{fill:var(--dim);font:12px ui-monospace,Consolas,monospace}
+.sv-t{fill:var(--ink);font:13px ui-monospace,Consolas,monospace}
+.sv-b{fill:none;stroke:var(--line);stroke-width:1.5}
+.sv-a{fill:none;stroke:var(--acc2);stroke-width:1.6}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+.small{font-size:.86rem;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>cacheHandle + cacheProxy</h1>
+<p class="lede">El patrón de caché del repo, explicado con un ejemplo que no tiene nada que ver con mallas.
+Al final hay un puente de vuelta a <code>msh</code>.</p>
+
+<div class="note">
+<b>Los ficheros de este tutorial.</b>
+<code>dev\cart.m</code> es el dueño de juguete (84 líneas: solo dominio) y
+<code>cachedOwner.m</code> — en la <b>raíz</b>, junto a <code>cacheHandle</code> y
+<code>cacheProxy</code> — la clase base de la que hereda (~1400: los ganchos y toda la política);
+<code>dev\cartDemo.m</code> es la sesión de 17 pasos (0–16). La batería de verificación del patrón vive en
+<code>dev\tests\test_cache.m</code>. Para correrlo:
+<pre><code>addpath('C:\repos\msh','C:\repos\msh\dev');  cartDemo</code></pre>
+<span class="small">Las trazas de la sección 5 son las <b>reales</b>, capturadas ejecutando el demo
+en MATLAB R2022a (<code>C:\Win\MATLAB2022a</code>).</span>
+</div>
+
+<div class="note">
+<b>Los cinco ejemplos, y qué enseña cada uno.</b> Este tutorial explica la <b>mecánica</b> con
+<code>cart</code>; los demás tienen el suyo y se pueden leer en cualquier orden.
+<div class="tw">
+<table>
+<tr><th>Ejemplo</th><th>Qué enseña</th><th>Tutorial</th></tr>
+<tr><td><code>cart</code> — carrito</td><td>la mecánica entera: las cuatro políticas, COW, el proxy</td>
+    <td>este</td></tr>
+<tr><td><code>route</code> — polilínea</td><td>que heredar basta: una clase nueva es puro dominio</td>
+    <td><a href="route_TUTORIAL.html" style="color:var(--acc2)"><code>route_TUTORIAL.html</code></a></td></tr>
+<tr><td><code>serie</code> — lista de números</td><td>cómo se <b>decide</b> la política: conservador primero, atajos después</td>
+    <td><a href="serie_TUTORIAL.html" style="color:var(--acc2)"><code>serie_TUTORIAL.html</code></a></td></tr>
+<tr><td><code>facto</code> — factoriales</td><td>el atajo incremental en su forma pura… que <b>pierde</b> contra un <code>cumprod</code> vectorizado</td>
+    <td rowspan="3"><a href="incremental_TUTORIAL.html" style="color:var(--acc2)"><code>incremental_TUTORIAL.html</code></a></td></tr>
+<tr><td><code>ivp</code> — una EDO</td><td>que el atajo no siempre es un handler incremental; y la precondición de <b>pureza</b></td></tr>
+<tr><td><code>collatz</code> — cadenas 3n+1</td><td>el atajo que <b>gana 100×</b>, y la primera <b>CP compuesta</b> de los ejemplos</td></tr>
+<tr><td><code>linsys</code> — <code>A\b</code></td><td>el más práctico: una <b>factorización</b> cacheada (el análogo del <code>bvh</code>), operadores sobrecargados, y un valor que <b>no se puede serializar</b></td></tr>
+</table>
+</div>
+</div>
+
+<h2>0. La idea en dos minutos (sin tecnicismos)</h2>
+
+<p>Tu clase tiene <b>datos</b> (un carrito: nombres, precios, cantidades) y cosas que se
+<b>calculan</b> a partir de ellos (el total). Si calcular es caro, no quieres repetirlo a cada rato.
+La idea del patrón cabe en una analogía: <b>un cuaderno de apuntes</b>.</p>
+
+<ul>
+<li>La primera vez que alguien pide el total, se calcula y se <b>apunta</b> en el cuaderno
+    (eso es un <b>MISS</b>).</li>
+<li>Las siguientes veces se lee el apunte y ya (<b>HIT</b>). No se recalcula nada.</li>
+<li>Cuando <b>editas</b> los datos, tampoco se recalcula nada. Solo se decide qué hacer con cada
+    apunte, y hay tres opciones:
+    <ol>
+    <li><b>dejarlo como está</b> — la edición no le afecta (cambiar un precio no cambia cuántas
+        líneas hay);</li>
+    <li><b>tacharlo</b> — ya no vale; se recalculará cuando alguien lo vuelva a pedir;</li>
+    <li><b>anotarle al margen</b> <i>"ojo: +1 café"</i> — el apunte es viejo pero, con esa nota,
+        ponerlo al día costará una suma en vez de recorrer el carrito entero. La puesta al día
+        ocurre cuando alguien lo pida, no antes (eso es el <b>replay</b>).</li>
+    </ol></li>
+<li>Si copias el objeto (<code>D = C</code>), las dos copias <b>comparten el cuaderno</b> — son
+    idénticas, ¿para qué duplicarlo? En cuanto una edita sus datos, esa copia estrena cuaderno
+    propio y la otra conserva el suyo intacto (eso es el <b>copy-on-write</b>, COW).</li>
+</ul>
+
+<p>Todo lo demás del documento son los detalles de hacer esto <b>bien</b> en MATLAB: que leer un
+apunte sea casi gratis, que ninguna edición pueda dejar un apunte mintiendo en silencio, y que las
+copias nunca se contaminen entre sí.</p>
+
+<div class="note">
+<b>Mini-glosario</b> — las palabras que se repiten, en una línea cada una:
+<div class="tw"><table>
+<tr><th>Término</th><th>Qué significa aquí</th></tr>
+<tr><td><b>CP</b> (cached property)</td><td>un valor derivado con apunte en el cuaderno: se lee como una propiedad (<code>C.total</code>) pero se calcula solo cuando hace falta</td></tr>
+<tr><td><b>MISS / HIT</b></td><td>no había apunte, se calcula / había apunte fresco, se sirve tal cual</td></tr>
+<tr><td><b>evento</b></td><td>el nombre de "qué tipo de edición pasó" (<code>additem</code>, <code>changeprice</code>…). Cada editor lo anuncia con <code>fire</code></td></tr>
+<tr><td><b>handler</b></td><td>la función que pone un apunte al día cuando su evento se disparó</td></tr>
+<tr><td><b>replay incremental</b></td><td>ponerse al día aplicando cada cambio anotado, uno a uno (<code>@(v,~,args)</code>: recibe los argumentos del evento, y NO puede mirar el objeto)</td></tr>
+<tr><td><b>sync absoluto</b></td><td>ponerse al día mirando el estado actual del objeto, de una sola vez (<code>@(v,o)</code>: sin argumentos de evento)</td></tr>
+<tr><td><b>invalidar</b> (<code>[]</code>)</td><td>tachar el apunte: se recalculará al leer</td></tr>
+<tr><td><b>insensible</b></td><td>no declarar el evento: el apunte sobrevive intacto</td></tr>
+<tr><td><b>log / marcador</b></td><td>la lista de cambios sin aplicar de un apunte viejo / su versión comprimida cuando el detalle ya no hace falta</td></tr>
+<tr><td><b>COW</b></td><td>copy-on-write: al editar, cuaderno nuevo para el editado; las copias hermanas conservan el suyo</td></tr>
+<tr><td><b><code>subsref</code></b></td><td>el método que MATLAB llama cuando escribes <code>C.algo</code>; sobrecargarlo es lo que permite que las CPs parezcan propiedades</td></tr>
+<tr><td><b>proxy</b> (<code>C.CP</code>)</td><td>la puerta a las operaciones especiales: borrar un apunte, sembrar un valor a mano, ver la tabla de estado</td></tr>
+</table></div>
+</div>
+
+<div class="note">
+<b>Chuleta de sintaxis</b> — todo lo que un usuario de una clase cacheada escribe:
+<div class="tw"><table>
+<tr><th>Escribes</th><th>Pasa</th></tr>
+<tr><td><code>C.total</code></td><td>lee (calcula o pone al día <b>solo si hace falta</b>)</td></tr>
+<tr><td><code>C.total_</code></td><td>recalcula <b>a la fuerza</b> desde cero (la vía de escape / de verificación)</td></tr>
+<tr><td><code>C.CP</code></td><td>imprime la tabla: qué CPs hay, en qué estado están y <b>qué política</b> declara cada una para cada evento (<code>additem-&gt;incremental, changeprice-&gt;sync</code>) — los eventos van en orden de prioridad, que es el que sigue el replay</td></tr>
+<tr><td><code>C.CP.total.delete</code></td><td>borra el valor cacheado (la definición queda); no se reasigna</td></tr>
+<tr><td><code>C = C.CP.total.set(x)</code></td><td>siembra un valor a mano (nadie lo verifica); hay que reasignar</td></tr>
+<tr><td><code>C = C.CP.total.removeCP</code></td><td>borra definición y valor; hay que reasignar</td></tr>
+</table></div>
+Y lo que escribe el <b>autor</b> de la clase: heredar de <code>cachedOwner</code>, la constante
+<code>CP_EVENTS</code>, <code>obj = obj.Define(...)</code> por cada CP, y
+<code>obj = obj.fire({...}, args)</code> en cada método que edite datos. Nada más — la §10 tiene la
+receta completa.
+</div>
+
+<p class="small"><b>Cómo leer este documento:</b> §1–§4 explican el porqué y el cómo (de menos a más
+detalle); <b>§5 es la mejor sección si solo vas a leer una</b> — la sesión entera paso a paso, con el
+estado del cuaderno dibujado en cada paso; §6–§9 son referencia; §10 la receta para tu propia clase;
+§11–§12 contexto. Los bloques plegados <i>"Detalle de rendimiento"</i> se pueden saltar sin perder el
+hilo.</p>
+
+<h2>1. El problema que resuelve</h2>
+
+<p>Tienes una clase de <b>valor</b> (semántica de copia: <code>B = A</code> son dos objetos
+independientes) y una magnitud <b>derivada</b> de sus datos que es <b>caro</b> calcular. Guardarla
+en una propiedad normal falla de tres maneras:</p>
+
+<ol>
+<li><b>Se queda rancia.</b> Editas los datos y la propiedad sigue con el valor viejo, ahora mentira.</li>
+<li><b>Se copia entera.</b> Cada <code>B = A</code>, cada paso por argumento de función, arrastra el
+    valor derivado aunque nadie lo vaya a leer.</li>
+<li><b>O bien la borras a la primera edición</b> — y entonces pagas el cálculo completo cada vez,
+    incluso cuando el cambio era mínimo y actualizar el valor viejo habría costado cuatro sumas.</li>
+</ol>
+
+<p>El patrón ataca los tres con tres ideas:</p>
+
+<ul>
+<li><b>Pereza.</b> Nada se computa hasta que alguien lo lee (MISS); a partir de ahí se sirve (HIT).</li>
+<li><b>Indirección por referencia.</b> El valor no vive en el objeto sino en un <i>handle</i>
+    aparte; copiar el objeto copia un puntero, no un megabyte.</li>
+<li><b>Invalidación con matices.</b> Una edición no borra: cada derivado <i>declara</i> a qué
+    eventos es sensible y qué hacer con cada uno — ignorarlo, morir, o <b>apuntarse el evento en un
+    log y actualizarse solo</b> la próxima vez que lo lean (<i>replay perezoso</i>).</li>
+</ul>
+
+<h2>2. Los cuatro actores</h2>
+
+<p>Con la analogía del cuaderno: <code>cacheHandle</code> <b>es el cuaderno</b> (compartido por las
+copias), <code>cacheProxy</code> es el <b>mando a distancia</b> para las operaciones especiales,
+<code>cachedOwner</code> es el <b>motor</b> que tu clase hereda, y el dueño es <b>tu clase</b> — lo
+único que escribes. La separación es lo primero que hay que tener claro, porque es lo que hace que
+tres de los cuatro no sepan nada del dominio en el que se usan:</p>
+
+<div class="tw">
+<table>
+<tr><th>Actor</th><th>Tipo</th><th>Guarda</th><th>No sabe</th></tr>
+<tr>
+  <td><code>cacheHandle</code></td><td>handle (referencia)</td>
+  <td>Los <b>VALORES</b>: un <code>store</code> clave → entrada, y las claves en curso de resolución</td>
+  <td>Qué significa ninguna clave, ni cómo se computa, ni qué eventos existen</td>
+</tr>
+<tr>
+  <td><code>cacheProxy</code></td><td>valor, <b>sin estado</b></td>
+  <td>Nada: solo una referencia al dueño. Reenvía la cadena de subscripts</td>
+  <td>Todo. Es un reenviador puro</td>
+</tr>
+<tr>
+  <td><code>cachedOwner</code></td><td>clase <b>base</b> (valor)</td>
+  <td>Todo lo demás: <code>DEFS</code> y <code>CACHE</code> (privadas suyas), el
+      <code>subsref</code>, la <b>POLÍTICA</b> entera — MISS/HIT, replay y cascada, COW, colapso
+      del log —, <code>Define</code>/<code>RemoveCP</code>, los contratos del proxy y el
+      <code>loadobj</code></td>
+  <td>Qué dominio es este: lee el vocabulario de una constante que define la subclase, y la
+      política de cada CP de la <b>firma</b> de sus handlers</td>
+</tr>
+<tr>
+  <td>el <b>DUEÑO</b> (aquí <code>cart</code>, allí <code>msh</code>)</td><td>hereda de <code>cachedOwner</code></td>
+  <td>Solo <b>DOMINIO</b>: sus datos, sus editores (que disparan <code>fire</code>), sus
+      <b>definiciones</b> y la lista <code>CP_EVENTS</code></td>
+  <td>—</td>
+</tr>
+</table>
+</div>
+
+<p class="small">Las tres primeras son reutilizables tal cual; el dueño es lo que escribes tú — 63
+líneas en el caso de <code>cart</code>. Que todo el mecanismo viva en una clase <b>base</b> no es una
+preferencia de estilo: en MATLAB una propiedad privada solo la escriben los métodos de su clase, y
+<code>builtin('subsref')</code> solo esquiva la sobrecarga desde un método de la clase del objeto —
+y un método <b>heredado</b> cuenta como método de la clase (§4.3). Una versión anterior del patrón
+separaba la política en un <code>cacheEngine</code> estático "puro": al no tener ninguno de los dos
+privilegios, había que pasarle el estado empaquetado en un <code>ctx</code> en cada llamada — un
+concepto entero y un peaje por lectura que la fusión eliminó.</p>
+
+<p>Dibujado, con dos copias hermanas recién hechas:</p>
+
+<svg viewBox="0 0 700 250" role="img" aria-label="Diagrama: dos objetos de valor comparten un cacheHandle que contiene el store">
+  <rect class="sv-b" x="14" y="26" width="150" height="82" rx="7"/>
+  <text class="sv-t" x="26" y="48">C  (valor)</text>
+  <text class="sv-l" x="26" y="70">NAME PRICE QTY</text>
+  <text class="sv-l" x="26" y="88">DEFS  (defs)</text>
+  <text class="sv-l" x="26" y="103">CACHE ●────</text>
+
+  <rect class="sv-b" x="14" y="140" width="150" height="82" rx="7"/>
+  <text class="sv-t" x="26" y="162">D = C  (valor)</text>
+  <text class="sv-l" x="26" y="184">NAME PRICE QTY</text>
+  <text class="sv-l" x="26" y="202">DEFS  (defs)</text>
+  <text class="sv-l" x="26" y="217">CACHE ●────</text>
+
+  <path class="sv-a" d="M164 100 C 210 100, 220 118, 258 122"/>
+  <path class="sv-a" d="M164 214 C 210 214, 220 132, 258 128"/>
+  <circle cx="262" cy="125" r="4" fill="var(--acc2)"/>
+
+  <rect class="sv-b" x="286" y="52" width="400" height="150" rx="7"/>
+  <text class="sv-t" x="300" y="76">cacheHandle  (referencia: UNO, compartido)</text>
+  <text class="sv-l" x="300" y="100">store.total    = {state:'fresh'  , value:6 , log:{}}</text>
+  <text class="sv-l" x="300" y="122">store.ticket   = {state:'fresh'  , value:'cafe' , log:{}}</text>
+  <text class="sv-l" x="300" y="144">store.topPrice = {state:'pending', value:3 , log:{e1}}</text>
+  <text class="sv-l" x="300" y="172">inFlight = {}      (guarda de ciclos)</text>
+</svg>
+
+<p>Tres consecuencias que conviene interiorizar ya:</p>
+<ul>
+<li>Copiar el dueño <b>no</b> copia la caché: copia el puntero. Las dos copias comparten valores
+    mientras representen los mismos datos, que es exactamente cuando compartirlos es correcto.</li>
+<li>Como el store es <b>estado de rendimiento y nunca dato</b>, escribir en el handle compartido
+    (depositar un MISS, resolver un pendiente) es benigno: lo peor que puede pasar es que alguien
+    recompute algo.</li>
+<li>No hay recolector de basura propio ni hace falta. Al derivar de <code>handle</code>, MATLAB lo
+    destruye por conteo de referencias en cuanto la propiedad privada del dueño deja de apuntarlo.</li>
+</ul>
+
+<h2>3. La entrada y su máquina de estados</h2>
+
+<p>Una entrada del store es un struct escalar con tres campos, y todo el patrón gira alrededor de
+ellos:</p>
+
+<pre class="m"><code>store.&lt;clave&gt; = struct( 'state' , 'fresh'|'pending' , ...
+                        'value' , v ,   % el ultimo valor conocido
+                        'log'   , L )   % edits SIN aplicar (solo si pending)</code></pre>
+
+<p><code>fresh</code> = el valor es válido, se sirve tal cual. <code>pending</code> = el valor es
+<b>viejo pero recuperable</b>, y <code>log</code> dice qué le pasó a los datos desde entonces. Que
+una clave <b>no esté</b> en el store es el tercer estado: ausente.</p>
+
+<svg viewBox="0 0 700 300" role="img" aria-label="Máquina de estados: ausente, fresh y pending">
+  <rect class="sv-b" x="20" y="120" width="130" height="52" rx="26"/>
+  <text class="sv-t" x="52" y="151">AUSENTE</text>
+  <rect class="sv-b" x="285" y="120" width="130" height="52" rx="26" style="stroke:var(--fresh);stroke-width:2"/>
+  <text class="sv-t" x="325" y="151">FRESH</text>
+  <rect class="sv-b" x="550" y="120" width="130" height="52" rx="26" style="stroke:var(--pend);stroke-width:2"/>
+  <text class="sv-t" x="578" y="151">PENDING</text>
+
+  <path class="sv-a" d="M150 138 L 281 138" marker-end="url(#ar)"/>
+  <text class="sv-l" x="160" y="128">lectura → MISS: compute</text>
+
+  <path class="sv-a" d="M415 132 C 470 112, 500 126, 546 132" marker-end="url(#ar)"/>
+  <text class="sv-l" x="430" y="106">evento con handler</text>
+  <text class="sv-l" x="430" y="120">(log += edit)</text>
+
+  <path class="sv-a" d="M546 160 C 500 178, 470 168, 419 160" marker-end="url(#ar)"/>
+  <text class="sv-l" x="432" y="192">lectura → REPLAY</text>
+
+  <path class="sv-a" d="M600 120 C 612 74, 640 74, 652 118" marker-end="url(#ar)"/>
+  <text class="sv-l" x="536" y="64">otro evento con handler:</text>
+  <text class="sv-l" x="562" y="50">el log CRECE</text>
+
+  <path class="sv-a" d="M330 120 C 342 66, 372 66, 384 118" marker-end="url(#ar)"/>
+  <text class="sv-l" x="300" y="52">evento no declarado:</text>
+  <text class="sv-l" x="322" y="38">sobrevive</text>
+
+  <path class="sv-a" d="M300 178 C 240 226, 150 210, 92 178" marker-end="url(#ar)"/>
+  <text class="sv-l" x="150" y="232">evento declarado con []  ·  .delete  ·  redefinir</text>
+
+  <path class="sv-a" d="M576 182 C 470 262, 220 254, 96 182" marker-end="url(#ar)"/>
+  <text class="sv-l" x="300" y="278">evento declarado con []  ·  .delete</text>
+
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+    orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="var(--acc2)"/></marker></defs>
+</svg>
+
+<p class="small">Falta una arista por no cargar el dibujo: <code>C.&lt;clave&gt;_</code> (recálculo
+forzado) lleva a FRESH desde cualquier estado, tirando valor y log.</p>
+
+<p>En cristiano: <b>ausente</b> = nunca se calculó (o se tachó); <b>fresh</b> = el apunte vale y se
+sirve tal cual; <b>pending</b> = el apunte es viejo, pero se conserva porque junto con su
+<code>log</code> —la lista de lo que pasó desde entonces— ponerse al día saldrá más barato que
+recalcular. Fíjate en que <b>editar nunca calcula nada</b>: las ediciones solo mueven apuntes entre
+estados; los valores solo cambian cuando alguien <b>lee</b>.</p>
+
+<div class="note">
+<b>Por qué el store es un struct y no un <code>containers.Map</code>.</b>
+Se da por supuesto que las claves ya son nombres MATLAB válidos (quien registra las definiciones lo
+exige), y el acceso por campo dinámico sale ~5× más barato que un lookup de Map. Importa porque el
+HIT está en el camino caliente de <i>toda</i> lectura. De paso, <code>clone</code> es <b>una
+asignación</b> en vez de un bucle: el struct es un valor y MATLAB ya lo copia perezosamente.
+</div>
+
+<div class="note">
+<b>Cuatro ideas equivocadas que conviene matar ya.</b>
+<ul>
+<li><i>"Al editar se ejecutan los handlers."</i> No: al editar solo se <b>anota</b> qué pasó. Los
+    handlers corren en la siguiente <b>lectura</b> — todo el patrón es perezoso, y una clave que
+    nadie vuelve a leer no cuesta nada más.</li>
+<li><i>"Copiar el objeto copia la caché."</i> No: copia el <b>puntero</b>. Compartir es correcto
+    mientras las copias representen los mismos datos, y el COW las separa justo cuando dejan de
+    hacerlo.</li>
+<li><i>"pending = valor corrupto."</i> No: es un valor <b>viejo con instrucciones para
+    actualizarlo</b>. Corrupto sería servirlo sin el replay; el estado existe precisamente para no
+    tener que elegir entre tirar el valor y mentir.</li>
+<li><i>"Las operaciones del proxy devuelven siempre un objeto nuevo."</i> Solo <code>.set</code> y
+    <code>.removeCP</code> (semántica de valor: hay que reasignar). <code>.delete</code> es un
+    statement que muta el handle compartido, y no se reasigna nada.</li>
+</ul>
+</div>
+
+<h2>4. El ejemplo: <code>cart</code></h2>
+
+<p>Un carrito de la compra que hereda de <code>cachedOwner</code>. Los datos son tres vectores
+paralelos; los derivados son cuatro, elegidos para que cada uno ejercite una rama distinta del
+motor:</p>
+
+<div class="tw">
+<table>
+<tr><th>CP</th><th>compute</th><th>eventos declarados</th><th>lo que enseña</th></tr>
+<tr><td><code>total</code></td><td><code>sum(PRICE.*QTY)</code></td>
+    <td><code>additem</code> → <code>@(v,~,d) v+d</code><br><code>changeprice</code> → <code>@(v,c) sum(...)</code></td>
+    <td>replay <b>incremental</b> (con argumentos) y <b>sync absoluto</b>, con cascada entre ambos</td></tr>
+<tr><td><code>ticket</code></td><td><code>strjoin(NAME,' + ')</code></td>
+    <td><code>additem</code> → <code>[]</code></td>
+    <td><code>[]</code> = <b>invalidar</b>; y que sobrevive intacta a <code>changeprice</code> porque no lo declara</td></tr>
+<tr><td><code>topPrice</code></td><td><code>max([0 PRICE])</code></td>
+    <td><code>changedata</code> → <code>@(v,c) max(...)</code></td>
+    <td>reaccionar <b>solo al evento general</b>, sin declarar los específicos</td></tr>
+<tr><td><code>currency</code></td><td><code>'EUR'</code></td><td>ninguno</td>
+    <td>insensible: solo MISS/HIT, sobrevive a todo</td></tr>
+</table>
+</div>
+
+<h3>4.1 El dueño entero: datos, vocabulario y eventos</h3>
+
+<p>Esto no es un extracto: quitando los comentarios de cabecera y el <code>Demo</code> (que está en
+§4.2), lo de abajo es <b>toda</b> la clase. Dos reglas del dueño: los eventos que la clase dispara
+se listan en una constante (<code>CP_EVENTS</code>, el vocabulario válido — es lo que caza las
+erratas en <code>Define</code>), y cada método que edita datos dispara <code>fire</code> con sus
+eventos <b>de específico a general</b>. <code>Add</code> además pasa un <b>argumento</b> del evento
+(el subtotal de la línea nueva), y ese argumento es lo que hace posible el atajo incremental.</p>
+
+<pre class="m"><code>classdef cart &lt; cachedOwner
+
+  properties (SetAccess = private)
+    NAME  = {}      % 1xN nombres
+    PRICE = []      % 1xN precios unitarios
+    QTY   = []      % 1xN cantidades
+  end
+
+  properties (Constant, Hidden)
+    CP_EVENTS = { 'additem' , 'changeprice' , 'changedata' }   % los eventos que dispara esta clase
+  end
+
+  methods
+    function obj = cart()
+      obj.DEBUG = true;                 % el ejemplo narra lo que hace
+    end
+
+    function obj = Add( obj , name , price , qty )
+      obj.NAME{  end+1 } = name;
+      obj.PRICE( end+1 ) = price;
+      obj.QTY(   end+1 ) = qty;
+      obj = obj.fire( { 'additem' , 'changedata' } , price*qty );
+    end
+
+    function obj = SetPrice( obj , name , price )
+      k = strcmp( obj.NAME , name );
+      if ~any( k ), error('cart:noitem','no hay "%s" en el carrito.', name ); end
+      obj.PRICE( k ) = price;
+      obj = obj.fire( { 'changeprice' , 'changedata' } );   % ABSOLUTO: sin args
+    end
+  end
+end</code></pre>
+
+<p><code>DEFS</code>, <code>CACHE</code>, el <code>subsref</code>, el constructor del handle — nada
+de eso aparece: vive en <code>cachedOwner</code>, y como <code>fire</code> y todo el motor son
+métodos <b>de la clase</b> (heredados), leen <code>obj.DEFS</code>, <code>obj.CACHE</code> y
+<code>obj.CP_EVENTS</code> directamente. No hay que empaquetar ni pasar nada.</p>
+
+<h3>4.2 El registro de definiciones</h3>
+
+<p>Una definición es <code>compute</code> (cómo se calcula desde cero) más un struct
+<code>events</code> con un handler por evento al que la clave es sensible. Redefinir <b>descarta el
+valor cacheado</b>: el que había era de otra definición, no vale.</p>
+
+<pre class="m"><code>% cachedOwner.Define (recortado): validar, construir la entrada, decidir la cache
+ev = struct();                       % un struct CONSERVA el orden de insercion
+for a = 1:2:numel( varargin )
+  en = varargin{a};
+  if ~ismember( en , obj.CP_EVENTS )   % el vocabulario caza las erratas de evento
+    error('cachedOwner:unknownEvent','evento desconocido "%s".', en );
+  end
+  h = varargin{a+1};
+  if ~( isempty(h) || isa(h,'function_handle') )
+    error('cachedOwner:handler','el handler de %s debe ser un handle o [] (invalidar).', en );
+  end
+  ev.( en ) = h;
+end
+existed = isfield( obj.DEFS , name );
+obj.DEFS.( name ) = struct( 'compute' , computeFcn , 'events' , ev );
+c = obj.liveCache();
+if existed &amp;&amp; ~isempty(c) &amp;&amp; c.has( name )
+  obj.CACHE = c.cloneWithout( name );  % el valor cacheado era de OTRA definicion
+end
+
+% y en cart, las 4 definiciones del ejemplo
+function obj = Demo( obj )
+  obj = obj.Define( 'total' , @(c) sum( c.PRICE .* c.QTY ) , ...
+                    'additem'     , @(v,~,d) v + d , ...                 % INCREMENTAL
+                    'changeprice' , @(v,c)   sum( c.PRICE .* c.QTY ) );  % absoluto
+  obj = obj.Define( 'ticket' , @(c) strjoin( c.NAME , ' + ' ) , ...
+                    'additem' , [] );                                    % INVALIDAR
+  obj = obj.Define( 'topPrice' , @(c) max( [ 0 , c.PRICE ] ) , ...
+                    'changedata' , @(v,c) max( [ 0 , c.PRICE ] ) );      % solo el GENERAL
+  obj = obj.Define( 'currency' , @(c) 'EUR' );                           % sin eventos
+end</code></pre>
+
+<div class="note">
+<b>La firma del handler ES la declaración — y el orden también dice algo.</b>
+Un handler con <b>3+ argumentos</b>, <code>@(v,c,args...)</code>, queda declarado
+<b>incremental</b>: recibe el valor viejo, el objeto y los argumentos del evento, y aplica <i>solo
+el cambio</i> (uno por edit, en orden). Un handler de <b>2 argumentos</b>, <code>@(v,c)</code>, es un
+<b>sync absoluto</b>: se sincroniza contra el objeto actual, que ya lo contiene todo, y por eso uno
+solo subsume N edits. No hay que anotar nada más en ningún sitio: la base mira la aridad
+(<code>nargin</code> del handle) <b>una vez, al registrar</b>, y se guarda el resultado en la
+definición. Y el <b>orden de declaración</b> en <code>Define</code> es la prioridad del replay —
+declara de específico a general. Ninguno de los dos es <code>compute</code>: la gracia está en que
+sean más baratos que él.
+<br><br>
+<b>En cristiano, las cuatro políticas:</b>
+<code>@(v,~,args)</code> = <i>"aplícame este cambio concreto"</i> ·
+<code>@(v,o)</code> = <i>"ponme al día mirando el objeto"</i> ·
+<code>[]</code> = <i>"tírame, ya me recalcularán"</i> ·
+no declarar = <i>"esto ni me va ni me viene"</i>.
+</div>
+
+<div class="note">
+<b>Un <code>varargin</code> mal puesto era una declaración ambigua, y ganaba el silencio.</b>
+La aridad de <code>@(varargin)</code> es −1 y la de <code>@(v,varargin)</code> es −2: ninguna de las
+dos llega al umbral de 3 del incremental, así que <b>las dos caían del lado absoluto</b> y el handler
+se invocaba como <code>h(v,o)</code>. Si su autor lo quería incremental, el replay fallaba, degradaba
+a <code>compute</code> y el atajo se quedaba ahí de adorno — y entonces sin un solo aviso, porque cada
+escalón de la cascada traga su error a propósito (hoy ese silencio ya no existe: ver
+<code>cachedOwner:handlerFailed</code>). <code>Define</code> rechaza ahora las dos
+(<code>cachedOwner:ambiguousHandler</code>) y pide declarar la intención: <code>@(v,o)</code> para
+absoluto, <code>@(v,o,varargin)</code> para incremental — que da −3 y sí cuenta como tal.
+</div>
+
+<div class="note">
+<b>Y un handler incremental no puede <i>leer</i> el objeto: se escribe <code>@(v,~,args)</code>.</b>
+El log guarda <b>ediciones, no estados</b>. Cuando el replay recorre N edits pendientes, el segundo
+argumento es siempre el objeto <b>de ahora</b> — el de después de las N —, no el que había cuando
+ocurrió cada una. Un handler que lo lea da un valor <b>mal, y en silencio</b>. Con la forma natural de
+una media incremental,
+<code>@(v,o,x) (v*(numel(o.VAL)-1)+x)/numel(o.VAL)</code>, la serie <code>[2 4 6]</code> devolvía
+<b>3.78</b> en vez de 4 — y con <b>una sola</b> edición pendiente acertaba: es decir, pasaba los tests
+de juguete y fallaba en producción. Por eso <code>Define</code> rechaza el handler
+<b>anónimo</b> cuyo cuerpo nombra ese argumento (<code>cachedOwner:incrementalUsesOwner</code>) y pide
+declararlo no usado, <code>@(v,~,args)</code>; si de verdad necesitas mirar el objeto, lo que tienes
+no es un incremental sino un <b>sync absoluto</b> <code>@(v,o)</code>. Lo que <code>Define</code> no
+puede ver — un handler <b>opaco</b> (<code>@funcion</code>, <code>@Clase.metodo</code>:
+<code>func2str</code> no trae cuerpo) o uno que llega de un <code>.mat</code> guardado antes de esta
+guarda — lo cierra el <b>replay</b>: en cuanto hay más de una edición pendiente renuncia al atajo y
+degrada (dato correcto, atajo perdido), avisando una vez
+(<code>cachedOwner:incrementalOpaque</code> / <code>:incrementalUsesOwner</code>).
+</div>
+
+<p>Elegir la política de cada par (CP, evento) es <b>el</b> trabajo de diseño al usar el patrón.
+Este es el árbol completo — recórrelo para cada evento del vocabulario, y lo que no declares ya
+está bien elegido:</p>
+
+<svg viewBox="0 0 720 330" role="img" aria-label="Árbol de decisión: qué declarar para cada evento de una CP">
+  <rect class="sv-b" x="220" y="10" width="285" height="40" rx="7"/>
+  <text class="sv-t" x="238" y="34">¿El evento puede CAMBIAR el valor?</text>
+
+  <path class="sv-a" d="M290 50 C 230 76, 170 84, 120 96" marker-end="url(#ar)"/>
+  <text class="sv-l" x="150" y="66">no</text>
+  <rect class="sv-b" x="10" y="100" width="220" height="52" rx="7" style="stroke:var(--fresh);stroke-width:2"/>
+  <text class="sv-t" x="26" y="122">NO LO DECLARES</text>
+  <text class="sv-l" x="26" y="140">el valor sobrevive intacto</text>
+
+  <path class="sv-a" d="M430 50 C 480 76, 520 84, 560 96" marker-end="url(#ar)"/>
+  <text class="sv-l" x="520" y="66">sí</text>
+  <rect class="sv-b" x="420" y="100" width="290" height="40" rx="7"/>
+  <text class="sv-t" x="436" y="124">¿Hay forma más barata que recomputar?</text>
+
+  <path class="sv-a" d="M480 140 C 420 166, 340 172, 280 184" marker-end="url(#ar)"/>
+  <text class="sv-l" x="352" y="160">no</text>
+  <rect class="sv-b" x="120" y="188" width="220" height="52" rx="7" style="stroke:var(--gone);stroke-width:2"/>
+  <text class="sv-t" x="136" y="210">DECLÁRALO CON  [ ]</text>
+  <text class="sv-l" x="136" y="228">invalida: cae y se recomputa al leer</text>
+
+  <path class="sv-a" d="M600 140 C 630 160, 640 168, 650 184" marker-end="url(#ar)"/>
+  <text class="sv-l" x="636" y="162">sí</text>
+  <rect class="sv-b" x="440" y="188" width="270" height="40" rx="7"/>
+  <text class="sv-t" x="456" y="212">¿Te basta el ESTADO FINAL del objeto?</text>
+
+  <path class="sv-a" d="M520 228 C 480 250, 440 256, 410 266" marker-end="url(#ar)"/>
+  <text class="sv-l" x="452" y="246">sí</text>
+  <rect class="sv-b" x="200" y="270" width="250" height="52" rx="7" style="stroke:var(--pend);stroke-width:2"/>
+  <text class="sv-t" x="216" y="292">HANDLER ABSOLUTO  @(v,o)</text>
+  <text class="sv-l" x="216" y="310">un solo sync subsume N edits</text>
+
+  <path class="sv-a" d="M640 228 C 655 244, 660 252, 662 264" marker-end="url(#ar)"/>
+  <text class="sv-l" x="500" y="252">necesito cada paso</text>
+  <rect class="sv-b" x="470" y="270" width="245" height="52" rx="7" style="stroke:var(--pend);stroke-width:2"/>
+  <text class="sv-t" x="486" y="292">INCREMENTAL  @(v,~,args)</text>
+  <text class="sv-l" x="486" y="310">la firma con args LO declara; uno por edit</text>
+</svg>
+
+<p class="small">Dos matices del árbol: el <b>incremental</b> solo tiene sentido para eventos que se
+disparan <i>con argumentos</i> (en <code>cart</code>, <code>additem</code>) — para el resto la
+opción buena es el absoluto. Y "no declarar" el específico pero sí el general (como hace
+<code>topPrice</code>) es la forma de decir <i>"para este caso no tengo atajo fino, pero mi sync
+general me vale"</i>.</p>
+
+<h3>4.3 <code>subsref</code>: la centralita — cuatro puertas y un fallback (dentro de <code>cachedOwner</code>)</h3>
+
+<p>Primero, qué es <code>subsref</code>, porque todo cuelga de él: cuando escribes
+<code>C.total</code>, MATLAB no sabe si <code>total</code> es una propiedad, un método o un invento —
+y si la clase define un método llamado <code>subsref</code>, MATLAB le entrega la cadena entera
+(<code>.total</code>, <code>.CP.foo.delete</code>, lo que sea) y le deja decidir. Sobrecargarlo es lo
+que consigue que una clave cacheada <b>se lea como si fuera una propiedad</b>. El precio: <i>toda</i>
+lectura del objeto pasa por aquí, así que el caso común tiene que resolverse en las primeras
+líneas.</p>
+
+<p>La base solo <b>tría</b> la cadena; quien la interpreta es el motor:</p>
+
+<pre class="m"><code>function varargout = subsref( obj , s )
+  if ~isscalar( obj ), ...error notScalar... ; end   % la clase es ESCALAR (ver §6)
+  while strcmp( s(1).type , '()' )                   % o(1) es un no-op permitido:
+    ...valida que el indice sea 1...                 % se QUITA el eslabon y se sigue
+    if isscalar( s ), varargout = { obj }; return; end
+    s = s(2:end);
+  end
+  nm = '';
+  if strcmp( s(1).type , '.' ) &amp;&amp; ( ischar( s(1).subs ) || isstring( s(1).subs ) )
+    nm = char( s(1).subs );
+  end
+  if ~isempty( nm )
+    if isscalar( s ) &amp;&amp; isfield( obj.DEFS , nm )     % ---- 1) CAMINO CALIENTE: C.total
+      varargout = { obj.access( nm ) };
+      return;
+    end
+    if strcmp( nm , 'CP' )                           % ---- 2) plano de control: C.CP...
+      if isscalar( s ), varargout{1} = cacheProxy( obj ); return; end
+      out = obj.cachedAccess( s(2:end) );
+      if isempty( out ), varargout = {};             %      statement (.delete)
+      else, varargout = out( 1:max( min( nargout , numel(out) ) , 1 ) );
+      end
+      return;
+    end
+    if numel(nm) &gt; 1 &amp;&amp; nm(end) == '_' &amp;&amp; isfield( obj.DEFS , nm(1:end-1) )
+      v = obj.recompute( nm(1:end-1) );              % ---- 3) sufijo '_': recalculo
+      if numel( s ) &gt; 1, v = subsref( v , s(2:end) ); end
+      varargout = { v };  return;
+    end
+    if isfield( obj.DEFS , nm )                      % ---- 4) C.total.algo: indexar DENTRO
+      varargout = { subsref( obj.access( nm ) , s(2:end) ) };   % subsref, NO builtin (§9)
+      return;
+    end
+  end
+  [ varargout{ 1:max(nargout,1) } ] = builtin( 'subsref' , obj , s );   % propiedades y metodos
+end</code></pre>
+
+<p class="small">Las cuatro puertas están ordenadas de más caliente a más fría, y cada una resuelve
+directo contra métodos privados de la misma clase
+(<code>access</code>/<code>cachedAccess</code>/<code>recompute</code>) — el parseo de la cadena
+ocurre una sola vez, aquí, y no hay nada que empaquetar porque el motor ya vive dentro.</p>
+
+<div class="note">
+<b>Esta última línea es la razón de que exista <code>cachedOwner</code>.</b>
+<code>builtin('subsref',obj,s)</code> solo esquiva la sobrecarga cuando se le llama <b>desde un método
+de la clase del objeto</b>. Llamándolo desde <code>cacheEngine</code> (método estático de otra clase)
+MATLAB despacha normal, vuelve a entrar en el <code>subsref</code> del dueño y recursa hasta el
+límite de 500 — lo comprobé por las malas al escribir el motor. La pregunta decisiva era entonces:
+¿un método <b>heredado</b> cuenta como método de la clase? Sí — verificado con un experimento mínimo
+(las seis formas de acceso: propiedad desde script, método vía cadena, desde una anónima,
+constructor+método, método-luego-propiedad, método de la base). Por eso el <code>subsref</code> — y
+con él todo el motor — puede vivir en la clase base y ninguna subclase tiene que reescribirlo. Y por
+eso mismo <i>no</i> podía vivir en una clase aparte: la versión intermedia del patrón lo intentó con
+un <code>cacheEngine</code> estático y tuvo que inventar el <code>ctx</code> para compensar los
+privilegios que le faltaban.
+</div>
+
+<p>Fíjate en que <code>C.total</code> (lectura corriente, camino caliente) <b>no toca el proxy</b>, y
+ahora tampoco el despachador del motor: va derecho a <code>access</code>. El proxy es el plano de
+control, y sale más caro; la lectura barata no debe pagarlo.</p>
+
+<h3>4.4 El motor: leer, hacer replay, disparar eventos</h3>
+
+<p>Todo lo que sigue son métodos privados/protegidos de <code>cachedOwner</code>. Ninguna línea
+menciona carritos: el dominio entra solo por <code>obj.CP_EVENTS</code> y por las firmas de los
+handlers declarados.</p>
+
+<p><b>Leer</b> es un solo lookup en el caso bueno. <code>tryGet</code> devuelve la <b>entrada
+completa</b> justamente para que el HIT no pague tres accesos (<code>has</code> + <code>state</code>
++ <code>value</code>). Y el orden de las dos primeras líneas es deliberado:</p>
+
+<pre class="m"><code>function v = access( obj , name )
+  c = obj.liveCache();
+  if ~isempty( c )
+    [ hit , e ] = c.tryGet( name );                      % UN lookup: el HIT es el camino caliente
+    if hit &amp;&amp; strcmp( e.state , 'fresh' )
+      v = e.value;  return;                              % ---- HIT: no se toca la DEFINICION
+    end
+  end
+
+  r = obj.DEFS.( name );                                 % a partir de aqui SI se usa
+  if isempty( c ), v = r.compute( obj ); return; end     % sin handle: computa sin cachear
+
+  c.enter( name );                                       % guarda de ciclos
+  done = onCleanup( @() c.leave( name ) );               % libera aunque el compute falle
+  if hit
+    v = obj.replay( name , r , e.value , e.log );        % ---- PENDING: replay
+  else
+    v = r.compute( obj );                                % ---- MISS
+  end
+  c.setFresh( name , v );                                % mutacion COMPARTIDA (benigna)
+end</code></pre>
+
+<div class="note">
+<b>Por qué la definición se lee <i>después</i> de mirar la caché.</b>
+<code>r = obj.DEFS.(name)</code> copia la entrada entera, con sus function handles dentro — y en
+MATLAB copiar un handle de función no es copiar un puntero. En un HIT esa copia no se usa para nada.
+Sacarla del camino caliente es gratis y es justo lo que hace que el HIT sea de verdad barato; la
+versión monolítica de esta clase la pagaba en cada lectura.
+</div>
+
+<p><b>El replay</b> es una cascada de tres intentos, de más barato a más caro. Cada escalón se
+protege con <code>try</code>: un handler que falla degrada al siguiente, nunca rompe la lectura.
+Pero degradar <b>no puede ser gratis y mudo</b>: la clase se quedaba dando el valor correcto por el
+camino caro <i>para siempre</i>, sin una sola señal. Cada escalón que se cae <b>avisa una vez</b>
+(<code>cachedOwner:handlerFailed</code>, con la causa real dentro), <b>cuenta</b> las veces que pasa
+y lo <b>marca en la tabla</b> — <code>ATAJO ROTO (no es dato malo)</code>, porque eso es exactamente
+lo que es: un problema de rendimiento, no de corrección. Redefinir la CP limpia el historial.</p>
+
+<pre class="m"><code>function v = replay( obj , name , r , v0 , L )
+  % 1) el handler INCREMENTAL declarado (el de 3+ args), si TODOS los edits del
+  %    log disparan su evento con args -&gt; aplicalo edit a edit, en orden
+  ie = r.inc;  ih = r.incH;                   % resueltos en Define, no aqui
+  useInc = ~isempty( ie ) &amp;&amp; ...
+           all( cellfun( @(ed) ~isempty( ed.args ) &amp;&amp; any( strcmp( ie , ed.fired ) ) , L ) );
+  if useInc
+    try
+      v = v0;
+      for i = 1:numel( L ), v = ih( v , obj , L{i}.args{:} ); end
+      return;
+    catch ME   % el atajo fallo: sigue la cascada
+    end
+  end
+  % 2) SYNC ABSOLUTO: el primer handler de 2 args declarado, EN EL ORDEN DE
+  %    DECLARACION (especifico -&gt; general). Uno solo subsume TODOS los edits.
+  fired = {};
+  for i = 1:numel( L ), fired = [ fired , L{i}.fired ]; end
+  for o = fieldnames( r.events ).'
+    h = r.events.( o{1} );
+    if isempty( h ) || cachedOwner.isInc( h ), continue; end   % solo los ABSOLUTOS
+    if any( strcmp( o{1} , fired ) )
+      try
+        v = h( v0 , obj );
+        return;
+      catch ME
+      end
+    end
+  end
+  % 3) red de seguridad: recomputar desde cero
+  v = r.compute( obj );
+end</code></pre>
+
+<p class="small">Aquí no hay ni una constante de dominio: qué handler es incremental lo dijo su
+<b>firma</b> y la prioridad de los absolutos la dio el <b>orden de declaración</b> en
+<code>Define</code>. El dominio entero viaja dentro de las definiciones.</p>
+
+<details>
+<summary>Detalle de rendimiento: por qué el incremental se resuelve en <code>Define</code> (opcional)</summary>
+<p class="small">Antes esta función y el bucle de
+<code>fire</code> llamaban a <code>incOf</code>, que recorre los eventos preguntando
+<code>nargin</code> por handler — y preguntar la aridad de un handle cuesta unos ~180 µs frente a los
+~5 µs de leer un campo, en un sitio que se pisa una vez por clave pendiente y por edición, y otra por
+cada replay. Ahora <code>Define</code> lo resuelve una vez y lo deja en la definición
+(<code>DEFS.inc</code> y <code>DEFS.incH</code>); registrar es frío, editar y leer no.
+<code>incOf</code> sigue existiendo por una razón concreta: como <code>DEFS</code> viaja en el
+<code>.mat</code>, un fichero guardado antes de este cambio trae definiciones <i>sin</i> esos dos
+campos, y <code>loadobj</code> los rellena al cargar con el mismo <code>incOf</code> de siempre.</p>
+</details>
+
+<p><b>Disparar un evento</b> es donde vive el copy-on-write. No se muta el handle: se construye uno
+<b>nuevo</b>, y cada entrada del viejo se clasifica en una de tres.</p>
+
+<pre class="m"><code>function obj = fire( obj , fired , varargin )    % protegido: lo llaman los editores
+  args = varargin;
+  cOld = obj.liveCache();
+  if isempty( cOld ), obj.CACHE = cacheHandle(); return; end
+  edit = struct( 'fired' , { fired } , 'args' , { args } );
+  cNew = cOld.clone();                           % COW: handle NUEVO, store clonado
+  D    = obj.DEFS;                               % HOISTED: leerlo por clave costaba
+  for k = cOld.keys(), key = k{1};               %          una llamada a subsref
+    if ~isfield( D , key )                       % sin definicion: cae
+      cNew.remove( key );  continue;
+    end
+    d   = D.( key );
+    ev  = d.events;
+    hit = fired( isfield( ev , fired ) );        % declarados, EN EL ORDEN de fired
+
+    if isempty( hit )                            % (a) insensible: SOBREVIVE tal cual
+      continue;                                  % ya esta en cNew: NO se toca
+
+    elseif isempty( ev.( hit{1} ) )              % (b) decide el MAS ESPECIFICO; [] = CAE
+      cNew.remove( key );
+
+    else                                         % (c) con handler: queda PENDIENTE
+      e = cOld.entry( key );
+      if strcmp( e.state , 'pending' ), L = e.log; else, L = {}; end
+      % el log guarda fidelidad SOLO si el replay incremental sigue vivo: esta
+      % clave declara un handler incremental, este edit dispara su evento CON
+      % args, y el log era todo-incremental. En cuanto algo de eso falla, el
+      % incremental muere PARA SIEMPRE (exige que TODOS los edits lo sean) y al
+      % replay solo le importa la UNION de eventos -> UN marcador.
+      ie      = d.inc;                           % el evento incremental DE ESTA CP
+      incEdit = ~isempty( ie ) &amp;&amp; ~isempty( args ) &amp;&amp; any( strcmp( ie , fired ) );
+      purelog = isempty( L ) || ~isempty( L{end}.args );
+      if incEdit &amp;&amp; purelog
+        L{end+1} = edit;                         % fidelidad total, un edit por entrada
+      else
+        u = {};
+        for i = 1:numel( L ), u = [ u , L{i}.fired ]; end
+        u = unique( [ u , fired ] , 'stable' );
+        if ~isempty( ie ), u = u( ~strcmp( u , ie ) ); end  % sin inc: ni se intenta
+        L = { struct( 'fired' , { u } , 'args' , {{}} ) };
+      end
+      cNew.setPending( key , e.value , L );
+    end
+  end
+  obj.CACHE = cNew;
+end</code></pre>
+
+<details>
+<summary>Detalle de rendimiento: clonar el store y sacar <code>DEFS</code> del bucle (opcional)</summary>
+<p class="small">La versión anterior de <code>fire</code> partía de un
+<code>cacheHandle</code> vacío y copiaba entrada por entrada, así que una clave <i>insensible</i> —la
+que no tiene nada que ver con el evento— costaba dos llamadas a método de handle, y una edición
+escalaba con el número total de CPs cacheadas. Clonando, la clave que sobrevive cuesta <b>cero</b> y
+solo se tocan las afectadas. Eso solo dio parte de la mejora: el resto estaba en <b>sacar
+<code>obj.DEFS</code> del bucle</b> — leer la propiedad dos veces por clave costaba ~180 µs por
+clave, del orden de la llamada a <code>subsref</code> que se comenta más abajo. Entre las dos, una
+edición con 63 CPs cacheadas bajó de <b>12 ms a 2,1 ms</b>. El orden de los campos se conserva: <code>clone</code> lo
+hereda, y ni <code>rmfield</code> ni sobreescribir un campo lo alteran.</p>
+</details>
+
+<p class="small">El colapso a marcador no es cosmético: sin él, un bucle que edita mil veces sin
+leer deja logs de mil entradas que un único sync iba a subsumir igual — y cada evento copia el log
+entero al handle nuevo, así que el coste acumulado era O(n²). Con el marcador, el log de una clave
+sin atajo incremental mide 1 haga lo que haga el bucle. (El log de una clave <i>con</i> atajo sí
+crece durante una racha de edits incrementales: cada uno se aplica una vez y hace falta entero.)</p>
+
+<div class="note">
+<b>Las dos mutaciones que sí son compartidas, y por qué está bien.</b>
+<code>fire</code> hace COW (handle nuevo) porque los datos <b>divergen</b>: la hermana ya no
+representa lo mismo que yo. Pero <code>access</code> deposita el resultado en el handle
+<b>compartido</b>, porque ahí nadie ha divergido todavía: el valor que acabo de calcular es
+igual de válido para mis hermanas. Regla: <i>el COW separa al editar; dentro del mismo estado de
+datos, compartir es correcto y gratis</i>.
+</div>
+
+<div class="note">
+<b>El único agujero del copy-on-write: un valor que es <i>handle</i>.</b> Todo lo anterior descansa
+en que MATLAB copia los valores. Si una CP cachea un objeto <code>handle</code>,
+<code>fire</code> copia la <b>referencia</b> al store nuevo, así que mutarlo in place —lo natural en
+un handler incremental— corrompe la caché de las hermanas: comprobado con un
+<code>containers.Map</code>, la hermana con un ítem devolvía el valor de la que tenía dos. Ahí la
+caché deja de ser rendimiento y pasa a ser <b>dato malo</b>, que es justo lo que el patrón promete
+que no ocurre. No se puede impedir desde el motor (el valor lo produce el dominio), así que
+<code>access</code> avisa la primera vez que lo detecta —
+<code>warning('off','cachedOwner:handleValue')</code> lo silencia. La regla: cachea valores, y si
+tiene que ser un handle, cópialo en el <code>compute</code> y devuelve la copia desde el handler.
+</div>
+
+<h3>4.5 Las dos capas, y lo que costó llegar a ellas</h3>
+
+<p><code>cart</code> pasó por cuatro formas durante este trabajo — monolítica (319 líneas), con
+motor delegado en un <code>cacheEngine</code> estático (168), heredando con el motor aparte (65), y
+la definitiva: heredando de un <code>cachedOwner</code> que absorbió el motor (63) — y la salida del
+demo es <b>byte a byte idéntica</b> en las cuatro. El reparto final:</p>
+
+<div class="tw">
+<table>
+<tr><th>Capa</th><th>Contiene</th><th>Por qué ahí</th></tr>
+<tr><td><code>cart</code> (63)</td>
+    <td>datos, editores con <code>fire</code>, definiciones, <code>CP_EVENTS</code></td>
+    <td>Es el dominio: nadie más puede saber cuándo cambian los datos ni qué derivados valen la pena</td></tr>
+<tr><td><code>cachedOwner</code> (~750)</td>
+    <td>todo lo demás: <code>DEFS</code>+<code>CACHE</code>, <code>subsref</code>, MISS/HIT, replay
+        y cascada, COW, colapso del log, <code>Define</code>/<code>RemoveCP</code>, despacho y
+        contratos del proxy, <code>loadobj</code></td>
+    <td>El mecanismo exige privilegio de clase (propiedades privadas,
+        <code>builtin('subsref')</code>) y un método <b>heredado</b> lo tiene; la política vive con
+        él porque separarla (el <code>cacheEngine</code> intermedio) obligaba a inventar un
+        <code>ctx</code> para pasarle el estado — un concepto y un peaje por lectura a cambio de
+        una pureza que no compraba nada</td></tr>
+</table>
+</div>
+
+<p>Cuando una operación del proxy devuelve un dueño nuevo (<code>.set</code>,
+<code>.removeCP</code>), el despacho — que ahora es un método más de la clase — simplemente escribe
+las propiedades y devuelve <code>obj</code>. El duck typing que quedaba (los
+<code>withCache</code>/<code>withDefs</code> de las versiones anteriores) desapareció con la
+fusión:</p>
+
+<pre class="m"><code>% cachedOwner.cachedAccess, caso '.set': COW + sembrar + devolver el dueno nuevo
+c = obj.liveCache();
+if isempty( c ), c = cacheHandle(); else, c = c.clone(); end
+c.setFresh( name , s(3).subs{1} );
+obj.CACHE = c;                 % un metodo de la clase escribe su propiedad, y ya
+out = { obj };</code></pre>
+
+<div class="note">
+<b>La genericidad salió gratis — de hecho, salió ganando.</b> Medido en R2022a con las dos versiones
+vivas en el mismo proceso e intercalando <code>timeit</code> (4 rondas, consistente en todas): el HIT
+del patrón heredado cuesta ~130–180 µs frente a ~155–220 de la versión monolítica original — un
+<b>~20% más rápido</b>, porque conserva el reorden del HIT (la definición se lee después de mirar la
+caché) que la monolítica no tenía. La versión intermedia con <code>cacheEngine</code> + <code>ctx</code>
+pagaba un ~25% de peaje; la fusión lo eliminó.
+<br><br>
+Lo que de verdad dice la medida es otra cosa: <b>una propiedad cualquiera de una clase que sobrecarga
+<code>subsref</code> cuesta ~100–200 µs</b>, cuando un método de un <code>handle</code> cuesta ~6 µs y
+leer un campo de struct una fracción de µs. El precio del patrón no está en la caché, ni en la
+herencia: está en sobrecargar <code>subsref</code>. Si algo se lee en un bucle caliente, la respuesta
+no es inlinear nada: es <b>sacar la lectura del bucle</b> — y si lo que repites es una llamada a
+método, usar la <b>sintaxis de función</b> (<code>f(obj,...)</code> en vez de
+<code>obj.f(...)</code>), que no pasa por el despacho.
+<br><br>
+<b>Y de ahí sale la regla que conviene tener escrita: no caches lo barato.</b> Si <i>preguntar</i> ya
+cuesta ~100–200 µs, cachear un derivado que se computa en menos que eso es <b>pérdida neta</b>: pagas
+el despacho, el estado y la política para ahorrar menos de lo que cuesta la pregunta. Medido hoy en
+la misma sesión: un HIT de CP <b>~110–135 µs</b>, una propiedad normal de una clase pelada
+<b>~105 µs</b>, un campo de struct <b>~1,6 µs</b>. Regla gruesa: <b>cachea lo que tarde ≳0,5 ms</b>
+— el <code>bvh</code>, el <code>boundary</code>, las adyacencias de una malla — y deja fuera los
+contadores y las sumas de tres elementos. Ojo con leer los ejemplos como recomendación:
+<code>total</code> y <code>len</code> cachean cosas triviales <b>a propósito</b>, porque enseñan el
+mecanismo con valores que caben en la cabeza; en producción no se cachea nada de eso.
+</div>
+
+<h2>5. La sesión, paso a paso</h2>
+
+<p>Cada paso muestra el comando, el estado del store <b>después</b>, y la traza de depuración.
+Leyenda de las entradas:</p>
+<div class="k">
+  <span class="ent f"><b>clave</b> <span class="st">fresh</span></span>
+  <span class="ent p"><b>clave</b> <span class="st">pending + log</span></span>
+  <span class="ent g"><b>clave</b> <span class="st">cae / ausente</span></span>
+</div>
+
+<p class="small" style="margin-top:14px">Y cómo leer las trazas <code>[cart]</code> (con
+<code>DEBUG=true</code>, cada verbo es una decisión del motor):</p>
+<div class="tw"><table>
+<tr><th>Verbo</th><th>Significa</th><th>Coste</th></tr>
+<tr><td><code>HIT</code></td><td>valor fresco servido tal cual</td><td>un <code>isfield</code> + un campo</td></tr>
+<tr><td><code>MISS</code></td><td>no estaba: <code>compute</code> desde cero y se deposita</td><td>el del compute</td></tr>
+<tr><td><code>RPLAY</code></td><td>estaba pendiente: se actualiza el valor viejo (incremental o sync absoluto)</td><td>el del handler — la apuesta es que &lt; compute</td></tr>
+<tr><td><code>RECMP</code></td><td>recálculo forzado (<code>C.foo_</code>): tira valor y log</td><td>el del compute, siempre</td></tr>
+<tr><td><code>EVENT</code></td><td>un editor disparó eventos: cada entrada sobrevive / pende / cae</td><td>O(nº de claves), sin computar nada</td></tr>
+<tr><td><code>DEF</code> / <code>CACHE</code></td><td>registro de definición / operación manual del proxy</td><td>—</td></tr>
+</table></div>
+
+<div class="step">
+<h4><span class="n">0.</span> C = cart().Demo();</h4>
+<p class="small">Se registran las 4 definiciones. El store está <b>vacío</b>: definir no computa nada.</p>
+<div class="store"><span class="small">store: {} — <code>C.CP</code> imprime las 4 como <i>(sin calcular)</i></span></div>
+</div>
+
+<div class="step">
+<h4><span class="n">1.</span> C = C.Add('cafe',3,2);</h4>
+<p class="small">Dispara <code>{additem, changedata}</code>. No hay nada cacheado, así que el COW
+crea un handle nuevo vacío y ya. Nota: el handle <b>viejo</b> se queda huérfano y MATLAB lo
+destruye — salvo que alguna copia lo siga apuntando.</p>
+<p class="trace">[cart] EVENT {additem+changedata}: pendientes {-} | caen {-} | sobreviven {-}</p>
+</div>
+
+<div class="step">
+<h4><span class="n">2.</span> C.total, C.ticket, C.topPrice, C.currency</h4>
+<p class="small">Cuatro MISS: se computa y se deposita. <code>total</code> = 3·2 = 6.</p>
+<div class="store">
+  <span class="ent f"><b>total</b> <span class="st">fresh 6</span></span>
+  <span class="ent f"><b>ticket</b> <span class="st">fresh 'cafe'</span></span>
+  <span class="ent f"><b>topPrice</b> <span class="st">fresh 3</span></span>
+  <span class="ent f"><b>currency</b> <span class="st">fresh 'EUR'</span></span>
+</div>
+<p class="trace">[cart] MISS  "total" -&gt; calculado
+[cart] MISS  "ticket" -&gt; calculado
+[cart] MISS  "topPrice" -&gt; calculado
+[cart] MISS  "currency" -&gt; calculado</p>
+</div>
+
+<div class="step">
+<h4><span class="n">3.</span> C.total</h4>
+<p class="small">HIT. Un <code>isfield</code> y una lectura de campo: para eso está todo lo demás.</p>
+<p class="trace">[cart] HIT   "total"</p>
+</div>
+
+<div class="step">
+<h4><span class="n">4.</span> D = C;</h4>
+<p class="small">Dos objetos de valor, <b>un</b> <code>cacheHandle</code>. Nada que computar, nada
+que copiar: el store no se duplica.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">5.</span> C = C.Add('pan',1,1);</h4>
+<p class="small">Aquí se ve el patrón entero. <code>fired = {additem, changedata}</code>,
+<code>args = {1}</code> (el subtotal). Se construye un handle nuevo <b>para C</b>; D conserva el
+viejo con sus cuatro entradas frescas.</p>
+<div class="store">
+  <span class="ent p"><b>total</b> <span class="st">pending 6, log=[e1]</span></span>
+  <span class="ent g"><b>ticket</b> <span class="st">additem = []</span></span>
+  <span class="ent p"><b>topPrice</b> <span class="st">pending 3, marcador {changedata}</span></span>
+  <span class="ent f"><b>currency</b> <span class="st">fresh 'EUR'</span></span>
+</div>
+<p class="trace">[cart] EVENT {additem+changedata}: pendientes {total, topPrice} | caen {ticket} | sobreviven {currency}</p>
+<ul class="small">
+<li><code>total</code> declara <code>additem</code> con handler → <b>pendiente</b>, y el edit se
+    apunta <b>con sus args</b>: su replay incremental sigue vivo y necesita el edit entero.</li>
+<li><code>ticket</code> declara <code>additem</code> con <code>[]</code> → <b>cae</b>. Concatenar
+    nombres no tiene atajo: recomputar es tan barato como actualizar.</li>
+<li><code>topPrice</code> <b>no</b> declara <code>additem</code>, pero sí <code>changedata</code>,
+    que también se disparó → <b>pendiente</b>. Así se dice "no tengo atajo para este caso concreto,
+    pero mi sync general me arregla". Y como su replay solo puede ser absoluto, no guarda el edit:
+    guarda un <b>marcador</b> con la unión de eventos disparados.</li>
+<li><code>currency</code> no declara nada → <b>sobrevive</b> intacta.</li>
+</ul>
+</div>
+
+<div class="step">
+<h4><span class="n">6.</span> C.total  →  7&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;D.total  →  6</h4>
+<p class="small">El momento decisivo. C hace <b>replay incremental</b>: un edit en el log, todos
+con atajo, así que <code>6 + 1 = 7</code> — sin volver a sumar el carrito. D hace <b>HIT</b> y
+devuelve 6, que es lo <i>correcto</i> para D: D no tiene pan.</p>
+<div class="store">
+  <span class="ent f"><b>total</b> <span class="st">fresh 7</span></span>
+  <span class="ent g"><b>ticket</b></span>
+  <span class="ent p"><b>topPrice</b> <span class="st">pending 3, marcador {changedata}</span></span>
+  <span class="ent f"><b>currency</b> <span class="st">fresh 'EUR'</span></span>
+</div>
+<p class="trace">[cart] RPLAY "total" -&gt; 1 incremental(es) sobre el valor viejo
+[cart] HIT   "total"        &lt;-- este es el de D, en SU handle</p>
+</div>
+
+<div class="step">
+<h4><span class="n">7.</span> C.ticket  →  'cafe + pan'</h4>
+<p class="small">Cayó en el paso 5, así que MISS y compute. Nada dramático: era la política elegida
+para esta clave.</p>
+<p class="trace">[cart] MISS  "ticket" -&gt; calculado</p>
+</div>
+
+<div class="step">
+<h4><span class="n">8.</span> C = C.SetPrice('cafe',4);</h4>
+<p class="small"><code>fired = {changeprice, changedata}</code>, <b>sin args</b> (edit absoluto).</p>
+<div class="store">
+  <span class="ent p"><b>total</b> <span class="st">pending 7, marcador {changeprice, changedata}</span></span>
+  <span class="ent f"><b>ticket</b> <span class="st">fresh 'cafe + pan'</span></span>
+  <span class="ent p"><b>topPrice</b> <span class="st">pending 3, marcador {changedata, changeprice}</span></span>
+  <span class="ent f"><b>currency</b> <span class="st">fresh 'EUR'</span></span>
+</div>
+<p class="trace">[cart] EVENT {changeprice+changedata}: pendientes {total, topPrice} | caen {-} | sobreviven {currency, ticket}</p>
+<ul class="small">
+<li><code>ticket</code> <b>sobrevive</b>: cambiar un precio no cambia los nombres, y como no declara
+    ninguno de los dos eventos, nadie la molesta. Este es el caso que una invalidación a lo bruto
+    ("edito algo → borro la caché") tiraría a la basura sin motivo.</li>
+<li><code>total</code> declara <code>changeprice</code> (el <b>más específico</b> de los
+    disparados) → pendiente. El edit es absoluto, así que su replay incremental acaba de <b>morir</b>:
+    en vez de acumular el edit, queda un marcador.</li>
+<li><code>topPrice</code> ya era pendiente con marcador: la unión <b>absorbe</b> el evento nuevo y el
+    log sigue midiendo uno, se edite lo que se edite.</li>
+</ul>
+</div>
+
+<div class="step">
+<h4><span class="n">9.</span> C.total  →  9</h4>
+<p class="small">El log tiene un edit que <b>no</b> disparó <code>additem</code>, así que el atajo
+incremental no aplica (y menos mal: sumar un delta no arreglaría un precio cambiado). Cascada al
+escalón 2 → <code>changeprice</code>, absoluto → <code>4·2 + 1·1 = 9</code>.</p>
+<p class="trace">[cart] RPLAY "total" -&gt; sync absoluto via changeprice</p>
+</div>
+
+<div class="step">
+<h4><span class="n">10.</span> C.topPrice  →  4</h4>
+<p class="small">Dos edits pasaron por aquí y hay <b>una sola</b> llamada al handler. Es la ventaja
+del sync absoluto: se sincroniza contra el estado actual, que ya contiene los dos cambios — por eso
+el marcador ni siquiera guardó los edits, solo qué eventos dispararon. En la cascada,
+<code>changeprice</code> está en el marcador pero <code>topPrice</code> no lo declara, así que se
+pasa al general.</p>
+<div class="store">
+  <span class="ent f"><b>total</b> <span class="st">fresh 9</span></span>
+  <span class="ent f"><b>ticket</b> <span class="st">fresh 'cafe + pan'</span></span>
+  <span class="ent f"><b>topPrice</b> <span class="st">fresh 4</span></span>
+  <span class="ent f"><b>currency</b> <span class="st">fresh 'EUR'</span></span>
+</div>
+<p class="trace">[cart] RPLAY "topPrice" -&gt; sync absoluto via changedata</p>
+</div>
+
+<div class="step">
+<h4><span class="n">11.</span> C.total_  →  9</h4>
+<p class="small">El sufijo <code>_</code> <b>fuerza</b> el recálculo: tira valor y log y llama a
+<code>compute</code>. Es la vía de escape cuando sospechas de un handler (o acabas de escribir uno).
+Compara su resultado con el del replay: si difieren, el handler está mal.</p>
+<p class="trace">[cart] RECMP "total" -&gt; recalculado a la fuerza</p>
+</div>
+
+<div class="step">
+<h4><span class="n">12.</span> C.CP.total.delete</h4>
+<p class="small">Borra el <b>valor</b>; la definición sigue. Es un <i>statement</i>: no devuelve
+nada, y no hace falta reasignar <code>C</code>, porque muta el handle compartido — y por eso
+<b>también se lo quita a las hermanas</b> que compartan ese handle. Benigno: como mucho alguien
+recomputa.</p>
+<div class="store">
+  <span class="ent g"><b>total</b> <span class="st">borrada</span></span>
+  <span class="ent f"><b>ticket</b></span>
+  <span class="ent f"><b>topPrice</b></span>
+  <span class="ent f"><b>currency</b></span>
+</div>
+<p class="trace">[cart] CACHE "total" valor borrado (definicion intacta)</p>
+</div>
+
+<div class="step">
+<h4><span class="n">13.</span> C = C.CP.total.set( 999 );</h4>
+<p class="small">Siembra un valor a mano. <b>Nadie verifica que sea correcto</b>: es el gesto
+peligroso del proxy, y por eso es el único que <i>clona</i> el handle (COW) — la mentira queda
+aislada en C y no contamina a nadie más. Hay que reasignar: devuelve un dueño nuevo.</p>
+<p class="trace">[cart] CACHE "total" valor sembrado a mano
+[cart] HIT   "total"      &lt;-- C.total devuelve 999, tan feliz</p>
+</div>
+
+<div class="step">
+<h4><span class="n">14.</span> h = C.CP.total.additem</h4>
+<p class="small">Cualquier nombre de evento devuelve <b>el handler declarado</b> tal cual
+(<code>@(v,~,d)v+d</code>), o <code>[]</code> si la política era invalidar. Sirve para inspeccionar
+la política sin leer el <code>Define</code>, y para probar un handler a mano.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">15.</span> P = C.CP;  P.ticket</h4>
+<p class="small">Aquí es donde el proxy <b>hace falta de verdad</b>. En <code>C.CP.total</code> la
+cadena entera llega de una pieza al <code>subsref</code> del dueño y el proxy ni se construye. Pero
+si guardas <code>C.CP</code> en una variable, la cadena se rompe: lo que queda en <code>P</code>
+tiene que saber reenviar por sí mismo. Eso es <code>cacheProxy</code>.</p>
+</div>
+
+<div class="step">
+<h4><span class="n">16.</span> C = C.Define('bucle', @(c) c.bucle);  C.bucle</h4>
+<p class="small">El compute se pide a sí mismo. <code>enter</code> ya había anotado la clave en
+<code>inFlight</code>, así que la segunda entrada corta con un error legible en vez de recursar
+hasta agotar la pila. La guarda cubre también los handlers del replay, y el
+<code>onCleanup</code> libera la marca aunque el compute lance.</p>
+<p class="trace">ERROR ATRAPADO [cacheHandle:cycle]
+  ciclo en la clave 'bucle': su compute (o un handler de evento) la vuelve a pedir.</p>
+</div>
+
+<h3>La película en un vistazo</h3>
+
+<p>La misma sesión como matriz: una fila por CP, una columna por paso. El valor en
+<span class="tl"><span class="F">verde</span></span> está fresco, en
+<span class="tl"><span class="P">ámbar con ~</span></span> está pendiente (valor viejo + log), el
+<span class="tl"><span class="A">·</span></span> es ausente. La fila entera es el handle de C; desde
+el paso 5, D conserva el handle viejo con sus cuatro valores frescos.</p>
+
+<div class="tw">
+<table class="tl">
+<tr><th></th><th>0<br>def</th><th>1<br>Add</th><th>2<br>lee</th><th>3<br>lee</th><th>4<br>D=C</th>
+    <th>5<br>Add</th><th>6<br>lee</th><th>7<br>lee</th><th>8<br>SetP</th><th>9<br>lee</th>
+    <th>10<br>lee</th><th>11<br>_</th><th>12<br>del</th><th>13<br>set</th><th>14<br>h</th>
+    <th>15<br>P=CP</th><th>16<br>ciclo</th></tr>
+<tr><td>total</td><td class="A">·</td><td class="A">·</td><td class="F">6</td><td class="F">6</td>
+    <td class="F">6</td><td class="P">~6</td><td class="F">7</td><td class="F">7</td>
+    <td class="P">~7</td><td class="F">9</td><td class="F">9</td><td class="F">9</td>
+    <td class="A">·</td><td class="F">999</td><td class="F">999</td><td class="F">999</td><td class="F">999</td></tr>
+<tr><td>ticket</td><td class="A">·</td><td class="A">·</td><td class="F">cafe</td><td class="F">cafe</td>
+    <td class="F">cafe</td><td class="A">·</td><td class="A">·</td><td class="F">cafe+pan</td>
+    <td class="F">cafe+pan</td><td class="F">cafe+pan</td><td class="F">cafe+pan</td><td class="F">cafe+pan</td>
+    <td class="F">cafe+pan</td><td class="F">cafe+pan</td><td class="F">cafe+pan</td><td class="F">cafe+pan</td><td class="F">cafe+pan</td></tr>
+<tr><td>topPrice</td><td class="A">·</td><td class="A">·</td><td class="F">3</td><td class="F">3</td>
+    <td class="F">3</td><td class="P">~3</td><td class="P">~3</td><td class="P">~3</td>
+    <td class="P">~3</td><td class="P">~3</td><td class="F">4</td><td class="F">4</td>
+    <td class="F">4</td><td class="F">4</td><td class="F">4</td><td class="F">4</td><td class="F">4</td></tr>
+<tr><td>currency</td><td class="A">·</td><td class="A">·</td><td class="F">EUR</td><td class="F">EUR</td>
+    <td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td>
+    <td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td>
+    <td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td><td class="F">EUR</td></tr>
+</table>
+</div>
+
+<p class="small">Léela por filas y cada CP cuenta su política: <code>currency</code> nunca sale de
+verde (insensible); <code>ticket</code> muere y renace (invalidar); <code>topPrice</code> aguanta en
+ámbar cinco pasos — el valor viejo espera a que alguien lo lea — y se arregla con un solo sync;
+<code>total</code> pasa por todo: incremental (6→7), sync absoluto (7→9), borrado, siembra manual.
+Y léela por columnas: las ediciones (5, 8) solo cambian colores, nunca valores — <b>los valores solo
+cambian en las lecturas</b>. Eso es la pereza.</p>
+
+<h3>Ahora tú: tres ejercicios</h3>
+
+<details>
+<summary>1 — Diseña una CP: <code>nItems</code>, el número de líneas del carrito</summary>
+<p>Recorre el árbol de §4.2 para cada evento del vocabulario (<code>additem</code>,
+<code>changeprice</code>, <code>changedata</code>) antes de mirar la respuesta.</p>
+<pre class="m"><code>C = C.Define( 'nItems' , @(c) numel( c.NAME ) , ...
+              'additem' , @(v,~,d) v + 1 );      % INCREMENTAL: una linea mas
+% changeprice: NO se declara -- cambiar un precio no cambia cuantas lineas hay,
+%              y por no declararlo la CP SOBREVIVE intacta a los SetPrice.
+% changedata:  tampoco -- un handler aqui la dejaria pendiente con CUALQUIER
+%              edicion, incluidas las que no la afectan.</code></pre>
+<p class="small">El error típico es declarar <code>changedata</code> "por si acaso": justo eso
+convierte una CP casi-insensible en una que pende con cada edición. No declarar <b>es</b> una
+decisión, y muchas veces la buena.</p>
+</details>
+
+<details>
+<summary>2 — Predice las trazas de esta secuencia (sin ejecutarla)</summary>
+<pre class="m"><code>C = cart().Demo();
+C = C.Add( 'te' , 2 , 1 );
+C.total          % (a)
+C.total          % (b)
+C = C.SetPrice( 'te' , 5 );
+C.total          % (c)</code></pre>
+<p>Respuesta:</p>
+<pre class="m"><code>% (a) MISS  "total" -&gt; calculado             (= 2; el Add encontro la cache vacia)
+% (b) HIT   "total"                           (= 2)
+% (c) RPLAY "total" -&gt; sync absoluto via changeprice    (= 5)
+%     el SetPrice dejo a total pendiente; como el edit no fue additem, el
+%     incremental esta muerto y la cascada cae al primer absoluto declarado</code></pre>
+</details>
+
+<details>
+<summary>3 — ¿Por qué <code>C.CP.total.delete</code> no se reasigna y <code>C = C.CP.total.set(999)</code> sí?</summary>
+<p><code>.delete</code> borra <b>estado de rendimiento</b>: lo peor que puede pasarle a cualquiera
+que comparta el handle es recomputar, así que muta el handle compartido y en paz — es un statement.
+<code>.set</code> introduce un valor <b>que nadie verifica</b>: si se escribiera en el handle
+compartido, la mentira contaminaría a todas las copias hermanas. Por eso clona (COW) y devuelve un
+dueño nuevo que hay que reasignar: la mentira queda confinada en quien la pidió.</p>
+<p class="small">La regla general del patrón: mutación compartida solo mientras lo compartido siga
+siendo verdad para todos; en cuanto algo puede ser mentira o los datos divergen, COW.</p>
+</details>
+
+<h2>6. Los nueve mecanismos, aislados</h2>
+
+<h3>MISS / HIT</h3>
+<p>Pereza pura. El único coste en el camino caliente es <code>tryGet</code>: un <code>isfield</code>
+más una lectura de campo, y la entrada llega completa para no pagar más lookups.</p>
+
+<h3>Copy-on-write</h3>
+<p>Al editar datos, handle <b>nuevo</b>; las copias hermanas conservan su caché intacta y siguen
+sirviendo valores que para ellas siguen siendo verdad. Es lo que hace que este patrón sea compatible
+con la semántica de valor en vez de pelearse con ella.</p>
+
+<h3>Replay perezoso</h3>
+<p>Un evento no resuelve nada: solo <b>anota</b>. El trabajo se hace en el siguiente acceso, si
+llega — si nadie vuelve a leer esa clave, no se paga nunca. Y si llegan diez ediciones antes de la
+próxima lectura, el sync absoluto las resuelve todas con una llamada.</p>
+
+<h3>Las tres políticas por evento</h3>
+<div class="tw">
+<table>
+<tr><th>Declaración</th><th>Efecto al dispararse</th><th>Cuándo elegirla</th></tr>
+<tr><td><b>no declarar</b> el evento</td><td>la entrada sobrevive intacta</td>
+    <td>el derivado no depende de lo que ese evento cambia</td></tr>
+<tr><td><code>evento, []</code></td><td>la entrada cae; siguiente lectura = MISS</td>
+    <td>no hay atajo más barato que recomputar</td></tr>
+<tr><td><code>evento, @handler</code></td><td>pendiente + edit al log; se resuelve al leer</td>
+    <td>actualizar el valor viejo es mucho más barato que recomputar</td></tr>
+</table>
+</div>
+<p>Con eventos de granularidad distinta (específico → general) hay una regla extra: <b>manda el más
+específico declarado</b>, y un <code>[]</code> específico <b>no</b> lo pisa el handler de uno más
+general del mismo lote. Si lo que quieres es "no tengo atajo para este caso concreto pero mi sync
+general vale", la forma de decirlo es <b>no declarar el específico</b>.</p>
+<p><b>Y manda también frente al atajo incremental</b>, que es donde el motor no cumplía su propia
+regla: bastaba con que el evento del incremental estuviera <i>en el lote</i> para que se usara, así
+que un incremental declarado en el evento <b>general</b> se ponía por delante del handler absoluto
+del <b>específico</b> — que no llegaba a correr nunca (con específico <code>@(v,o) 999</code> y
+general <code>@(v,~,x) v+x</code> salía 105, no 999). La especificidad ya decidía para el
+<code>[]</code>; ahora decide siempre: el atajo es del <b>evento que gana</b>, no del lote. El
+incremental sigue usándose cuando es él quien gana — porque es el más específico declarado, o porque
+la edición solo disparó el general.</p>
+
+<h3>Guarda de ciclos</h3>
+<p><code>enter</code>/<code>leave</code> sobre la <b>pila</b> de claves en curso, con
+<code>onCleanup</code> para que se libere aunque el compute falle. Convierte un stack overflow en un
+error con nombre y clave.</p>
+
+<h3>CPs compuestas: dependencias descubiertas</h3>
+<p>Esa misma pila responde a la otra pregunta: <i>¿quién está calculando ahora mismo?</i> Si mientras
+se calcula <code>A</code> se lee <code>B</code>, la lectura queda apuntada como <b>dependencia</b> de
+<code>A</code> — junto con las dependencias que <code>B</code> ya tuviera, de modo que la lista es
+<b>transitivamente cerrada</b> y a <code>fire</code> le basta una pasada. No se declaran: <b>se
+descubren</b>, y valen para lo que de verdad se leyó al calcular.</p>
+<p>Para qué: una CP compuesta normalmente <b>no declara ningún evento</b> — no le hace falta, ella no
+mira los datos —, así que el motor la daba por insensible y <b>sobrevivía sirviendo un valor sacado de
+datos que ya no valían</b>. Ahora cae con aquella de la que sale. Tres consecuencias:</p>
+<ul>
+<li>una dependencia rota <b>gana a la declaración</b>: un handler pone al día por su evento, pero no
+    puede saber que ha cambiado la CP de la que sale su valor, así que la compuesta cae igual.</li>
+<li>la dependencia <b>sobrevive a los replays</b>. Poner un valor al día no cambia <i>de qué CP
+    salió</i>, así que al refrescar un pendiente las dependencias viejas se conservan. Guardar solo lo
+    leído <i>durante el replay</i> parecía natural y era un agujero: un handler incremental no lee
+    nada, de modo que una compuesta con atajo <b>perdía su dependencia en el primer replay</b> y a la
+    siguiente caída de su base sobrevivía sirviendo rancio en silencio (medido: servía 305 con la
+    verdad en 905, y la tabla dejaba de decir <code>sale de:</code>). Conservar de más es el lado
+    seguro: como mucho, una caída de sobra.</li>
+<li>los dos gestos que cambian un valor <b>sin evento</b> — <code>o.&lt;n&gt;_</code> y
+    <code>o.CP.&lt;n&gt;.set</code> — también tiran lo que se hubiera calculado a partir de ellos.</li>
+<li>si <b>ninguna</b> CP compone, el almacén lo sabe (<code>hasDeps</code>) y no se paga nada: ni en
+    <code>fire</code> ni en la tabla, que solo saca la columna <code>sale de:</code> cuando la hay.</li>
+</ul>
+<p><b>Dentro de la clase no se lee con un punto.</b> MATLAB no pasa por <code>subsref</code> en un
+método de la clase, y una función anónima escrita ahí hereda ese contexto: <code>@(o) o.otra*2</code>
+muere diciendo que <code>otra</code> no existe — y miente, existe. Desde dentro se lee
+<code>o.access('otra')</code>, que es la misma puerta y también registra la dependencia; desde fuera,
+<code>o.otra</code> vale. El motor traduce ese error
+(<code>cachedOwner:cpFromInside</code>) y dice qué escribir.</p>
+
+<h3>Ciclo de vida</h3>
+<p>Sin recolector: <code>handle</code> + conteo de referencias de MATLAB. El único puntero es la
+propiedad privada del dueño; cuando ese valor muere (sobrescrito, fuera de scope, borrado) se libera
+el store entero. Lo que <b>sí</b> hay que cuidar es un handle <i>no válido</i>: un objeto
+default-inicializado, a medio deserializar, o cuyo handle alguien borró. De ahí
+<code>liveCache</code>, que centraliza el <code>isempty(c) || ~isvalid(c)</code> para que los
+llamantes solo tengan que preguntar <code>isempty</code>.</p>
+<h3>Serialización: qué se guarda y qué no</h3>
+
+<p>Al salvar el objeto, la asimetría del patrón se aplica tal cual: <b>la caché no viaja; las
+definiciones sí</b>.</p>
+
+<div class="tw">
+<table>
+<tr><th>Qué</th><th>¿va en el <code>.mat</code>?</th><th>Por qué</th></tr>
+<tr><td><code>DEFS</code> — definiciones (compute + handlers)</td><td><b>sí</b></td>
+    <td>son <b>dato</b>: las registró el usuario y no hay forma de recuperarlas</td></tr>
+<tr><td><code>CACHE</code> — valores, estado <code>pending</code>, log</td><td><b>no</b> (<code>Transient</code>)</td>
+    <td>es <b>rendimiento</b>: se recomputa solo</td></tr>
+</table>
+</div>
+
+<p>Al cargar, el <code>loadobj</code> de <code>cachedOwner</code> (heredado, también por las
+subclases) instala un <code>cacheHandle</code> nuevo y vacío. Así que <b>la primera lectura tras un
+<code>load</code> es un MISS</b>, y de ahí en adelante todo vuelve a cachear con normalidad. Sin ese
+<code>loadobj</code> el objeto llegaría con el handle muerto y <i>cada</i> lectura recomputaría en
+silencio — para eso existe.</p>
+
+<p>Cuatro consecuencias, todas medidas:</p>
+
+<ol>
+<li><b>El fichero no engorda.</b> Un <code>cart</code> con una CP de 400×400 sembrada (1,28 MB de
+    valor cacheado) produce un <code>.mat</code> de <b>~2 KB</b> — el mismo que sin
+    ella. Para <code>msh</code> esto es lo que importa: guardar una malla con su BVH cacheado no mete
+    el BVH en el fichero.</li>
+<li><b>El log pendiente nunca sobrevive, y eso es una garantía.</b> Un objeto salvado con una CP en
+    estado <code>pending</code> (valor viejo + un edit sin aplicar) se carga <i>sin</i> esa entrada:
+    la lectura da un MISS limpio y recomputa. Nunca puede darse un replay de un log contra datos que
+    llegaron por otro camino.</li>
+<li><b>El atajo incremental sí sobrevive al viaje</b> (viaja con la definición): tras
+    <code>load</code>, editar y leer vuelve a usar el replay incremental, no solo el compute.</li>
+<li><b>Dos copias que compartían handle dejan de compartirlo</b> tras el <code>load</code>: cada una
+    recibe el suyo. Es la única degradación real y es benigna — como mucho las dos calculan lo mismo
+    por separado.</li>
+</ol>
+
+<div class="note">
+<b>Lo único que requiere cuidado del usuario.</b> Como <code>DEFS</code> viaja, <b>los handlers se
+serializan</b> — y un handle anónimo se lleva consigo el workspace que capturó. Escribe
+<code>@(o) f(o.X)</code>, que lee del objeto, y no <code>@(o) f(X)</code>, que metería una copia de
+<code>X</code> en cada <code>.mat</code> que guardes. Y si una subclase define su propio
+<code>loadobj</code>, tiene que llamar al de la base
+(<code>obj = loadobj@cachedOwner(obj)</code>) o la caché llegará muerta. (Para <i>refrescar
+definiciones</i> al cargar no hace falta escribir un <code>loadobj</code>: para eso está el gancho
+<code>refreshDefs</code> de aquí abajo.)
+</div>
+
+<div class="note">
+<b>Antes de adoptar el patrón en serio: qué pasa cuando la clase EVOLUCIONA con <code>.mat</code>
+vivos.</b> Que <code>DEFS</code> viaje tiene una cara B, comprobada con dos versiones de una misma
+clase (v1 guarda, v2 carga):
+<ol>
+<li><b>La lógica guardada gana a la nueva.</b> El objeto cargado usa los compute y handlers <i>del
+fichero</i>: mejorar un compute en el código no cambia lo que devuelven los <code>.mat</code> viejos
+(v2 con compute <code>2*N</code> servía <code>N</code>, el de v1). No es <i>detectable</i> desde la
+base — la base no puede saber qué compute "debería" haber —, pero sí es <b>evitable</b>: para eso está
+el gancho <code>refreshDefs</code> de abajo.</li>
+<li><b>Renombrar un evento resucita el dato rancio silencioso.</b> Las CPs guardadas declaran el
+nombre viejo, el código nuevo dispara el nuevo, y la CP parece <i>insensible</i>: sobrevive y sirve su
+valor con los datos ya cambiados (v2: <code>N=15</code>, <code>val=5</code>). Esto <b>sí</b> es
+detectable, y <code>loadobj</code> lo detecta: <code>cachedOwner:staleEvents</code> nombra las CPs y
+los eventos huérfanos al cargar.</li>
+</ol>
+La regla para clases que van a evolucionar con ficheros vivos: <b>registra las definiciones en un
+método y vuelve a llamarlo desde <code>refreshDefs</code></b> — así el código, y no el fichero, es la
+fuente de la lógica, y las dos trampas desaparecen de golpe. Si en cambio tus objetos guardados deben
+conservar <i>su</i> lógica histórica, no sobrescribas nada: ese es exactamente el comportamiento por
+defecto.
+</div>
+
+<h4><code>refreshDefs</code>: el gancho que devuelve el mando al código</h4>
+
+<p>Es un método <b>protegido</b> que no hace nada por defecto y que tu clase sobrescribe.
+<code>loadobj</code> lo llama al cargar — después de revivir la caché y migrar <code>DEFS</code>, y
+<i>antes</i> del aviso de eventos huérfanos, porque lo que el refresco arregla ya no es rancio y sería
+ruido avisar de ello:</p>
+
+<pre><code>methods (Access = protected)
+  function obj = refreshDefs( obj )
+    obj = obj.registerCPs();     % el MISMO método que llama tu constructor
+  end
+end</code></pre>
+
+<p>Dos propiedades que conviene tener claras:</p>
+<ul>
+<li><b>Solo pisa lo que re-registras.</b> Las CPs que el <i>usuario</i> definiera <i>ad hoc</i> sobre
+ese objeto concreto (<code>o = o.Define('miHistograma',...)</code>) no están en tu método de registro,
+así que conservan su definición del fichero. Es lo que se quiere: refrescas <i>tu</i> lógica, no la
+suya.</li>
+<li><b>El valor cacheado de una CP redefinida se descarta</b> (lo hace <code>Define</code>, por COW):
+ese valor lo produjo <i>otro</i> compute. Como <code>CACHE</code> no viaja, al cargar no había nada que
+descartar de todas formas.</li>
+</ul>
+
+<p>El ejemplo real es <code>ivp</code> (§ de abajo): registra su CP en un método privado
+<code>registerCPs</code>, lo llama el constructor y lo vuelve a llamar <code>refreshDefs</code>. Sin
+eso, una EDO guardada hace un año seguiría integrando con el <code>extendSol</code> de entonces.</p>
+
+<div class="note">
+<b>Nota para la migración de <code>msh</code>.</b> <code>msh</code> ya tiene la mitad buena de este
+esquema — sus definiciones de fábrica viven en un método aparte, <code>msh.defaultRegistry()</code>, en
+vez de estar esparcidas por el constructor — pero <b>hoy su <code>loadobj</code> no lo vuelve a
+llamar</b>: solo revive el handle de la caché. Es decir, una malla guardada usa para siempre los
+compute con los que se guardó, el del <code>bvh</code> incluido. Cuando <code>msh</code> herede de
+<code>cachedOwner</code>, el arreglo es una línea: un <code>refreshDefs</code> que haga
+<code>obj = obj.applyRegistry( msh.defaultRegistry() )</code>.
+</div>
+
+<h3>La clase es escalar, y se obliga</h3>
+
+<p>El motor indexa por <b>objeto</b>: una clave del store es una CP <i>de este</i> objeto. En un array
+no hay a qué indexar, y por eso <code>cachedOwner</code> no despacha arrays. Durante mucho tiempo eso
+se quedó en una limitación documentada, con el problema de que el usuario no la veía: un array daba
+errores de las tripas de MATLAB que no dicen nada del patrón —
+<code>MATLAB:maxrhs</code> <i>"Too many input arguments"</i> al leer <code>A.total</code> sobre un
+1×2 (todo el motor hace <code>obj.DEFS</code>, y sobre un array eso se expande a cs-list y revienta),
+y <code>MATLAB:noSuchMethodOrField</code> en <code>A(2).total</code>, donde la cadena entera cae al
+<code>builtin</code> porque el primer eslabón es <code>()</code> y no <code>.</code>. Ninguno de los
+dos devolvía un valor incorrecto —eso nunca— pero tampoco decía qué hacer.</p>
+
+<div class="note">
+<b>Lo limpio no se puede usar aquí.</b> MATLAB trae <code>matlab.mixin.Scalar</code> justo para esto,
+y funciona: cierra concatenación (<code>concatenationScalar</code>), paréntesis
+(<code>parenReferenceScalar</code>), asignación indexada (<code>parenAssignScalar</code>) y hasta
+<code>empty</code> (<code>emptyScalar</code>). Pero es <b>incompatible con el patrón</b>, y de forma
+tajante: la clase ni se carga —
+<code>Class 'cachedOwner' is not allowed to define a 'subsref' method'</code>—
+y el patrón <i>es</i> un <code>subsref</code>. O una cosa o la otra. Se probó.
+</div>
+
+<p>Así que el bloqueo es manual, y el patrón está bien situado para hacerlo porque <b>ya</b> es dueño
+del <code>subsref</code>. Tres métodos nuevos y dos guardas:</p>
+
+<table>
+<tr><th>Puerta</th><th>Dónde se cierra</th><th>Qué se bloquea</th></tr>
+<tr><td>concatenación</td><td><code>horzcat</code>, <code>vertcat</code>, <code>cat</code></td>
+    <td><code>[a,a]</code>, <code>[a;a]</code>, <code>cat(3,a,a)</code>, <code>[s.campo]</code></td></tr>
+<tr><td>lectura con <code>()</code></td><td><code>subsref</code>, primera línea</td>
+    <td><code>a(2)</code>, <code>a(:)</code>, <code>a([1 1])</code>, <code>repmat</code></td></tr>
+<tr><td>asignación con <code>()</code></td><td><code>subsasgn</code>, primera línea</td>
+    <td><code>A(3)=a</code>, y <code>B(2)=a</code> con <code>B</code> sin existir</td></tr>
+</table>
+
+<p>Todo sale con el mismo <code>cachedOwner:notScalar</code>, que además dice qué hacer en su lugar. De
+las 16 vías que se probaron sobrevive <b>una</b>: <code>empty</code>, que es estático y sigue
+devolviendo un 0×0. Se deja a propósito —MATLAB lo usa por dentro y sombrear un estático es peor
+negocio— porque ese 0×0 es <b>inerte</b>: <code>.total</code>, <code>.CP</code>, <code>.Demo()</code>
+y <code>(1)</code> sobre él dan todos <code>notScalar</code>.</p>
+
+<p><code>o(1)</code> <b>sí</b> se deja pasar. Es un no-op inofensivo que aparece en código genérico, y
+al aceptarlo <code>o(1).miCP</code> también funciona: la guarda quita el eslabón y sigue con el resto
+de la cadena — <b>quita, no recursa</b>, porque recursar exigía una salida y un statement del plano de
+control (<code>o(1).CP.x.delete</code>, que devuelve cero) moría en <code>unassignedOutputs</code>.</p>
+
+<div class="note">
+<b>Y hay una segunda mitad que no está en <code>subsref</code>.</b> Cuántas salidas pide MATLAB la
+decide <code>numArgumentsFromSubscript</code>, y su default pide <b>1</b> también para un statement
+que empieza con <code>()</code> — así que <code>o(1).CP.x.delete</code> seguía muriendo aunque el
+despacho lo tratara bien (curiosamente, la misma cadena empezando por <code>.</code> recibía 0 y
+funcionaba). La sobrecarga devuelve 0 en contexto <i>Statement</i> y 1 en el resto; devolver una
+salida de más cuando piden 0 es legal y es justo lo que setea <code>ans</code>, así que
+<code>o.total</code> sin punto y coma sigue mostrando su valor — los goldens byte a byte lo
+atestiguan. Los <code>[a,b] = ...</code> multi-salida no pasan por aquí: el número de LHS manda.
+<br><br>
+<b>Y una tercera mitad, que es donde estaba el bug:</b> una cadena que indexa <i>dentro</i> del valor
+puede dar una <b>lista separada por comas</b> — <code>o.cp.campo</code> sobre un struct array 1×3 son
+<b>tres</b> salidas, no una. Decir 1 las truncaba <b>en silencio</b>, y con el agravante de que la
+misma expresión, pasando el valor por una variable, sí devolvía las tres: el resultado dependía de si
+el objeto estaba en medio. El número no lo sabe el dueño: <b>lo sabe el valor</b>, y se le pregunta
+(<code>numArgumentsFromSubscript</code> funciona sobre struct arrays, cells y objetos con
+<code>subsref</code> propio: <code>3</code>, <code>3</code>, lo que diga el objeto). Dos cautelas que
+están en el código: contar obliga a <i>tener</i> el valor, así que se lee — queda cacheado, no se
+paga dos veces —, salvo con <code>o.cp_</code>, donde forzar el cálculo solo para contar lo haría
+<b>dos veces</b> (un statement sin punto y coma construiría el <code>bvh</code> dos veces), y ahí se
+cuenta solo si hay valor a mano. Y todo el conteo va en <code>try</code>: contar no puede romper
+nada, y si falla ya saldrá el error de verdad al ejecutar el <code>subsref</code>.
+<code>cacheProxy</code> lleva la misma sobrecarga (y una guarda escalar propia: un array de proxies
+daba el mismo <code>maxrhs</code> críptico; ahora <code>cacheProxy:notScalar</code>).
+</div>
+
+<p>El sustituto de un array es un <b>cell</b>:</p>
+
+<pre class="m"><code>K = { cart().Demo() , cart().Demo() };
+K{2} = K{2}.Add( 'cafe' , 3 , 2 );
+cellfun( @(x) x.total , K )        % -> [0 6]</code></pre>
+
+<div class="note">
+<b>El coste está donde nadie lo espera, y por eso este bloqueo sale casi gratis.</b> Añadir
+<code>subsasgn</code> a una clase de valor <i>parece</i> carísimo: medido sobre una clase pelada, una
+escritura de propiedad pasa de ~7 µs a ~0,5 ms. Dos cosas lo desactivan. La primera:
+<b>MATLAB no llama al <code>subsasgn</code> sobrecargado para las escrituras hechas dentro de un
+método de la clase</b> — comprobado con un contador dentro del método: 0 llamadas tras dos escrituras
+internas, 1 tras una externa. Los editores del dominio (<code>Add</code>, <code>SetPrice</code>,
+<code>AddPoint</code>), que son los que escriben propiedades en bucle, <b>no pagan nada</b>.
+<br><br>
+La segunda es la que de verdad zanja el asunto, y hay que medirla en una clase con <b>datos
+públicos</b> (<code>cart</code> y <code>route</code> los tienen <code>SetAccess = private</code>, así
+que son justo el caso donde el coste no se ve). En una clase que hereda de <code>cachedOwner</code>
+con una propiedad pública y setter que dispara eventos:
+<div class="tw"><table>
+<tr><th>Ruta de edición</th><th>Coste</th><th>Qué paga</th></tr>
+<tr><td><code>o.XY = v</code></td><td>~630 µs</td><td>el <code>subsasgn</code> sobrecargado</td></tr>
+<tr><td><code>o = o.SetXY(v)</code></td><td>~540 µs</td><td>el <code>subsref</code> sobrecargado (¡el mismo peaje!)</td></tr>
+<tr><td><code>o = SetXY(o,v)</code></td><td>~320 µs</td><td>nada: la llamada con sintaxis de función <b>no pasa por el despacho</b></td></tr>
+<tr><td colspan="3" class="small">Referencia: una lectura con HIT en esa misma clase cuesta ~96 µs; la misma escritura en una clase sin el patrón, ~7 µs.</td></tr>
+</table></div>
+Es decir: el <code>subsasgn</code> <b>no</b> impone un peaje nuevo. Cualquier interacción con un
+objeto que sobrecarga <code>subsref</code> ya lo pagaba — leer también. Escribir una propiedad cuesta
+un ~17% más que llamar a un método con punto, y ambas cosas son el mismo peaje de despacho.
+<br><br>
+<b>Y de aquí sale un truco aprovechable:</b> si editas en un bucle caliente, la <b>sintaxis de
+función</b> se salta el despacho por completo — <code>M = Transform(M,T)</code> en vez de
+<code>M = M.Transform(T)</code> ahorra ~200 µs por llamada. Es el mismo método, resuelto por la clase
+del primer argumento sin pasar por <code>subsref</code>.
+<br><br>
+En el lado de la lectura, las dos guardas escalares son un <code>isscalar</code> y un
+<code>strcmp</code>: acotadas por debajo del 5% de una lectura, y esa cota está inflada porque
+<code>timeit</code> ni resuelve operaciones tan rápidas.
+</div>
+
+<p>El <code>subsasgn</code> aprovecha el viaje para cerrar otra rareza: <b>escribir una CP</b>.
+<code>C.total = 5</code> soltaba <code>Unrecognized property 'total'</code> sobre algo que sí se puede
+leer, de lo que más despista del patrón. Ahora da <code>cachedOwner:readOnlyCP</code> y nombra las dos
+salidas de verdad: <code>o = o.CP.total.set(v)</code> para sembrar un valor,
+<code>o = o.Define('total',@(o)...)</code> para cambiar lo que calcula.</p>
+
+<h2>7. La API de <code>cacheHandle</code></h2>
+
+<div class="tw">
+<table>
+<tr><th>Método</th><th>Qué hace</th><th>Muta</th></tr>
+<tr><td><code>has(key)</code></td><td>¿está la clave?</td><td>no</td></tr>
+<tr><td><code>[tf,e] = tryGet(key)</code></td><td>"¿está? y dame la entrada" de una vez — <b>el del camino caliente</b></td><td>no</td></tr>
+<tr><td><code>entry(key)</code></td><td>la entrada completa (asume que está)</td><td>no</td></tr>
+<tr><td><code>setFresh(key,v[,deps])</code></td><td>deposita un valor válido (MISS resuelto, replay resuelto, recálculo)</td><td><b>sí</b></td></tr>
+<tr><td><code>setPending(key,v,L[,deps])</code></td><td>valor viejo + log de edits sin aplicar</td><td><b>sí</b></td></tr>
+<tr><td><code>setEntry(key,e)</code></td><td>copia una entrada tal cual (hoy solo la usa el motor propio de <code>msh</code>: desde que <code>fire</code> clona, la superviviente no se toca)</td><td><b>sí</b></td></tr>
+<tr><td><code>deps(key)</code></td><td>de qué otras claves salió ese valor (cierre transitivo)</td><td>no</td></tr>
+<tr><td><code>dropDependents(key)</code></td><td>fuera las entradas calculadas a partir de <code>key</code>; devuelve cuáles</td><td><b>sí</b></td></tr>
+<tr><td><code>remove(key)</code></td><td>quita la clave si está (no falla si no)</td><td><b>sí</b></td></tr>
+<tr><td><code>keys()</code></td><td>las claves, en <b>fila</b> (como devolvía <code>containers.Map</code>)</td><td>no</td></tr>
+<tr><td><code>clone()</code></td><td>handle nuevo con el mismo store — <b>una</b> asignación</td><td>no</td></tr>
+<tr><td><code>cloneWithout(key)</code></td><td><code>clone</code> + <code>remove</code>: el gesto del COW selectivo</td><td>no</td></tr>
+<tr><td><code>enter(key)</code> / <code>leave(key)</code></td><td>pila de claves en curso: <code>enter</code> lanza <code>cacheHandle:cycle</code> si reentras</td><td><b>sí</b></td></tr>
+<tr><td><code>noteDep(key)</code> / <code>takeDeps()</code></td><td>captura de dependencias sobre esa misma pila: apuntar lo leído / recogerlo al terminar</td><td><b>sí</b> / no</td></tr>
+<tr><td><code>nIn</code> · <code>hasDeps</code></td><td>propiedades, no métodos: se leen en el camino caliente (<i>¿me está leyendo alguien?</i>, <i>¿compone algo esta clase?</i>)</td><td>no</td></tr>
+</table>
+</div>
+
+<p>Y ya está: no hay <code>get</code>, ni <code>put</code> con lógica, ni política — todo lo que
+<i>decide</i> algo vive en el motor. La clase tuvo durante un tiempo accesores de cortesía
+(<code>state</code>/<code>value</code>/<code>log</code>/<code>clear</code>); el refactor final los
+retiró al comprobar que <b>nadie</b> en el repo los llamaba — <code>tryGet</code> y
+<code>entry</code> los cubren. API muerta es deuda: cada método público es una promesa que
+mantener.</p>
+
+<h2>8. El contrato de <code>cacheProxy</code></h2>
+
+<p>Es la clase más pequeña del patrón: cuatro métodos cortos y una propiedad. Y aun así hay cinco
+decisiones finas dentro:</p>
+
+<pre class="m"><code>function varargout = subsref( obj , s )
+  if ~isscalar( obj )                         % (0) ESCALAR, como el dueno: un array
+    error('cacheProxy:notScalar', ... );      %     de proxies daba un maxrhs criptico
+  end
+  if isempty( obj.OWNER )                     % (1) proxy huerfano: error claro,
+    error('cacheProxy:orphan', ... );         %     no un "Undefined function" criptico
+  end
+  out = cachedAccess( obj.OWNER , s );        % (2) reenvia TODA la cadena
+  if isempty( out )
+    varargout = {};                           % (3) statements: no devuelven nada
+  else
+    varargout = out( 1:max( min( nargout , numel(out) ) , 1 ) );   % (4)
+  end
+end
+
+function n = numArgumentsFromSubscript( obj , s , ctx )   % (5) statements piden 0 salidas...
+  if ctx == matlab.mixin.util.IndexingContext.Statement, n = 0; else, n = 1; end
+  if isscalar( obj ) && ~isempty( obj.OWNER )            % ...y la cadena puede dar una
+    try, n = cachedNumArgs( obj.OWNER , s , ctx ); catch, end   % LISTA: lo sabe el dueno
+  end
+end
+
+function disp( obj )
+  if ~isscalar( obj ), fprintf('  (array de cacheProxy: use un proxy por objeto)\n'); return; end
+  if isempty( obj.OWNER ), fprintf('  (cacheProxy sin dueno)\n'); return; end
+  displayCachedView( obj.OWNER );             % la tabla la pinta el dueno
+end</code></pre>
+
+<ol>
+<li><b>Reenvía la cadena entera</b>, sin interpretarla. Por eso el proxy no necesita saber qué
+    operaciones existen: añadir una nueva es cosa del dueño.</li>
+<li><code>cachedAccess</code> devuelve un <b>cell</b> de salidas, y <code>{}</code> significa
+    "esto no devuelve nada" — lo que permite que <code>C.CP.foo.delete</code> sea un statement
+    legal y no un <code>ans</code> espurio.</li>
+<li>El recorte con <code>max(min(nargout,...),1)</code> respeta el <code>nargout</code> del
+    llamante pero garantiza al menos una salida: en un contexto de display <code>nargout</code> es
+    0 y aun así hay que devolver el valor.</li>
+<li><code>numArgumentsFromSubscript</code> es la otra mitad de los statements: sin él, MATLAB pide
+    <b>1</b> salida a <code>P.foo.delete</code> (que devuelve cero) y la llamada muere en
+    <code>unassignedOutputs</code> antes de que el despacho pueda opinar. <i>Statement</i> → 0,
+    resto → 1; el dueño lleva la misma sobrecarga. Con una excepción: si la cadena indexa
+    <i>dentro</i> del valor y ése da una lista separada por comas, el número lo decide el valor —
+    y el proxy no puede saber si <code>P.foo.algo</code> es indexación o una operación del plano de
+    control, así que <b>se lo pregunta al dueño</b> (<code>cachedNumArgs</code>, la parte
+    <i>opcional</i> del contrato: un dueño que no lo implemente se queda en 1, como estaba).
+    Ojo, se le pregunta <b>llamándolo dentro de un <code>try</code></b>, no con
+    <code>ismethod</code>: <code>ismethod</code> no ve los métodos <code>Hidden</code> — comprobado,
+    dice <code>0</code> hasta para <code>cachedAccess</code> —, la misma trampa que
+    <code>methods()</code> en la guarda de sombras.</li>
+<li>La guarda escalar replica la del dueño: sin ella, <code>[P,P]</code> se puede formar (el proxy
+    no bloquea concatenación) y daba el <code>maxrhs</code> críptico de siempre.</li>
+</ol>
+
+<p>El contrato con el dueño es <b>duck typing</b>: cualquier clase que implemente estas dos cosas
+puede usar el proxy, y ambas pueden ser <code>Hidden</code> (el proxy las invoca como funciones, no
+con notación de punto):</p>
+
+<div class="tw">
+<table>
+<tr><th>Método del dueño</th><th>Obligación</th></tr>
+<tr><td><code>out = cachedAccess(owner,s)</code></td>
+    <td>recibe la cadena de subscripts <b>sin su primer eslabón</b> y devuelve un <b>cell</b> de
+        salidas — <code>{}</code> para las operaciones que no devuelven nada</td></tr>
+<tr><td><code>displayCachedView(owner)</code></td><td>imprime la tabla de definiciones y estados</td></tr>
+</table>
+</div>
+
+<p>Las siete formas que el dueño del ejemplo despacha:</p>
+<div class="tw">
+<table>
+<tr><th>Forma</th><th>Qué hace</th><th>¿Reasignar?</th></tr>
+<tr><td><code>C.CP</code></td><td>imprime la tabla de definiciones y estados</td><td>—</td></tr>
+<tr><td><code>C.CP.foo</code></td><td>el valor (computa o hace replay si hace falta)</td><td>no</td></tr>
+<tr><td><code>C.CP.foo.campo</code> / <code>(i)</code></td><td>indexar <b>dentro</b> del valor</td><td>no</td></tr>
+<tr><td><code>C.CP.foo.delete</code></td><td>borra el <b>valor</b> (la definición queda). Compartido</td><td>no: es statement</td></tr>
+<tr><td><code>C = C.CP.foo.removeCP</code></td><td>borra <b>definición y valor</b></td><td><b>sí</b></td></tr>
+<tr><td><code>C = C.CP.foo.set(x)</code></td><td>siembra un valor a mano (COW, aislado, sin validar)</td><td><b>sí</b></td></tr>
+<tr><td><code>C.CP.foo.&lt;evento&gt;</code></td><td>el handler declarado, o <code>[]</code> si la política es invalidar</td><td>no</td></tr>
+</table>
+</div>
+
+<h2>9. Las herramientas: <i>¿miente?</i> y <i>¿compensa?</i></h2>
+
+<p>El patrón trae dos métodos de diagnóstico, y responden a las dos preguntas que ninguna guarda
+automática puede contestar. Los dos se llaman igual: con <b>sintaxis de función</b> imprimen el
+informe, con <b>sintaxis de punto</b> devuelven los datos (es la regla de siempre —
+<code>subsref</code> siempre pide una salida).</p>
+
+<h3><code>VerifyCPs</code> — ¿lo que sirve la caché es verdad?</h3>
+
+<pre><code>VerifyCPs( o )                    <span class="c">% imprime el informe</span>
+[ malas , R ] = o.VerifyCPs()     <span class="c">% devuelve la lista y el detalle</span>
+assert( isempty( o.VerifyCPs() ) , 'hay CPs rancias' )   <span class="c">% en un test</span></code></pre>
+
+<p>Compara, CP a CP, <b>lo que sirve la caché</b> contra <b>lo que da su compute desde cero</b>. Caza
+los dos fallos que se ven igual desde fuera y que nada más detecta: un <b>handler que miente</b> (no
+falla, devuelve otra cosa) y el <b>olvido parcial de eventos</b> (declaraste unos y te faltó el que sí
+la afecta). No toca la caché, así que se puede repetir. Su precondición es la de la §<i>Trampas</i>: si
+el compute no es una función pura de los datos, esta herramienta no puede funcionar.</p>
+
+<h3><code>ProfileCPs</code> — ¿compensa cachearlo?</h3>
+
+<pre><code>ProfileCPs( o )        <span class="c">% imprime el informe</span>
+R = o.ProfileCPs()     <span class="c">% struct con trabajo/MISS/HIT/bytes/veredicto</span></code></pre>
+
+<p>Mide tres tiempos por CP, en tu máquina y con tus datos:</p>
+
+<div class="tw">
+<table>
+<tr><th>Columna</th><th>Qué es</th></tr>
+<tr><td><code>trabajo</code></td><td>el <code>compute</code> <b>pelado</b>: el cálculo y nada más</td></tr>
+<tr><td><code>MISS</code></td><td>el camino frío <b>entero</b> por el patrón (trabajo + maquinaria)</td></tr>
+<tr><td><code>HIT</code></td><td>servirla ya cacheada, por el camino real — <b>con</b> el peaje del despacho</td></tr>
+</table>
+</div>
+
+<p>Y con eso separa <b>dos preguntas que es fácil confundir</b>, que es lo que de verdad aporta:</p>
+
+<ol>
+<li><b>¿Debería esto ser una CP?</b> Compara <code>trabajo</code> con <code>HIT</code>. Si calcularlo
+    cuesta <i>menos</i> que servirlo cacheado, el patrón solo puede restar: hazlo un método normal y
+    te ahorras hasta el despacho. Esta pregunta <b>no se puede decidir en caliente</b> —cuando estás
+    dentro de <code>access()</code> el peaje ya está pagado—, así que es decisión de diseño y esta
+    herramienta es la única forma de tomarla con datos.</li>
+<li><b>¿Conviene guardarlo?</b> El ahorro es <code>MISS − HIT</code>, y es <b>por lectura extra entre
+    dos ediciones</b>. Multiplícalo por las lecturas que hagas de verdad. Si lees una sola vez por
+    edición, cachear <b>no compensa nunca</b>: recalculas igual, y además cada clave cacheada engorda
+    el <code>fire</code> de cada edición.</li>
+</ol>
+
+<p>Un ejemplo real, sobre <code>cart</code> — cuyas CPs son sumas de tres elementos, cacheadas
+<i>a propósito</i> para enseñar el mecanismo:</p>
+
+<pre><code>  CP          trabajo       MISS       HIT  ahorro/lect   memoria  veredicto
+! currency       5 us     265 us     59 us       206 us       6 B  NO DEBERIA SER CP: calcularla (5 us) cuesta menos que servirla (59 us).
+! total          3 us     296 us     73 us       223 us       8 B  NO DEBERIA SER CP: calcularla (3 us) cuesta menos que servirla (73 us).</code></pre>
+
+<p>La herramienta redescubre sola lo que la cabecera de <code>cart</code> ya avisaba. Compáralo con
+<code>collatz</code>, donde el veredicto es el contrario:</p>
+
+<pre><code>  CP         trabajo       MISS       HIT  ahorro/lect   memoria  veredicto
+  best        142 us    1.46 ms     99 us      1.36 ms      16 B  MARGINAL: el trabajo real apenas supera al peaje
+  lens      40.32 ms   51.48 ms     64 us     51.41 ms    400 KB  PAGA (799x): cada lectura extra ahorra 51.41 ms</code></pre>
+
+<div class="note">
+<b>Tres cosas que hay que saber para leerlo bien.</b>
+<ul>
+<li><b>Mide el coste MARGINAL</b>, con las dependencias ya calientes: de una CP compuesta cronometra
+    lo que cuesta <i>ella</i>, no ella más rehacer aquellas de las que sale. Es lo que hace falta para
+    decidir — la pregunta es «si no la cacheo, ¿qué me cuesta cada lectura?», y ahí el resto de la
+    caché sigue funcionando. (Sin ese cuidado, <code>best</code> de <code>collatz</code> medía 68 ms,
+    de los cuales 40 eran calcular <code>lens</code>.)</li>
+<li><b>Sí toca la caché</b>, al revés que <code>VerifyCPs</code>: la deja <b>caliente</b>, porque para
+    cronometrar un HIT hace falta que haya valor. No cambia ningún resultado, sí el estado.</li>
+<li><b>El veredicto depende del TAMAÑO de los datos de ahora.</b> Una malla de 100 caras y otra de 10
+    millones dan respuestas opuestas para la misma CP. Mide con datos representativos, y vuelve a
+    medir cuando cambien.</li>
+</ul>
+</div>
+
+<h3><code>InfoCP</code> — la ficha de UNA CP</h3>
+
+<p><code>ProfileCPs</code> compara todas las CPs entre sí; <code>InfoCP</code> baja al detalle de una y
+añade lo que no había en ningún sitio: el <b>historial</b>.</p>
+
+<pre><code>InfoCP( o , 'lens' )     <span class="c">% imprime la ficha</span>
+S = o.InfoCP( 'lens' )   <span class="c">% el struct, para usarlo en codigo</span>
+o.CP.lens.info           <span class="c">% lo mismo, por el plano de control</span></code></pre>
+
+<pre><code>  CP "lens" de collatz
+    estado     fresh, 40 KB
+    eventos    grow -> incremental
+               (en orden de PRIORIDAD; de una edicion decide el MAS ESPECIFICO)
+    sale de    -
+    la usan    best   &lt;- estas caen si esta cae
+    historial  1 recalculo(s) | 2 HIT | 1 replay | 0 caida(s) por evento
+    coste      calcularla 12.35 ms | servirla 117 us   -&gt; cachear PAGA (106x)</code></pre>
+
+<p>Las dos líneas del medio son el <b>grafo de dependencias</b> visto desde esa CP: <i>de quién sale</i>
+y <i>quién sale de ella</i> — o sea, qué se lleva por delante si cae. El <b>historial</b> lo llevan
+cuatro contadores en el <code>cacheHandle</code>, y viven <i>fuera</i> del store a propósito: si
+vivieran en la entrada, invalidar la clave borraría justo lo que se quiere contar. <code>clone</code>
+los copia, así que el historial sigue a la <b>estirpe</b> del objeto, no al valor.</p>
+
+<div class="note">
+<b>Una herramienta no puede falsear lo que enseña.</b> Cronometrar una CP <i>la lee</i>, y
+<code>timeit</code> la lee decenas de veces: la primera versión de <code>InfoCP</code> dejaba el
+contador de HIT en <b>42</b> de una sola llamada, y dos informes seguidos daban historiales distintos.
+Ahora <code>InfoCP</code> y <code>ProfileCPs</code> guardan los contadores antes de medir y los
+devuelven después. La batería lo comprueba: dos <code>InfoCP</code> seguidos tienen que dar lo mismo.
+</div>
+
+<p class="small">Un aviso que sale solo cuando toca: si una CP lleva recálculos y <b>cero</b> HIT, la
+ficha lo dice — o la estás invalidando en cada edición, o no te está sirviendo de nada.</p>
+
+<h3><code>o.ADVISE</code> — el consejero, que avisa solo</h3>
+
+<p><code>ProfileCPs</code> hay que acordarse de llamarlo. El consejero es la versión pasiva: enciendes
+<code>o.ADVISE = true</code> y la clase te avisa, <b>una vez</b>, de la CP que no se sostiene — sin
+cambiar nada del comportamiento, como <code>noEvents</code> o <code>handlerFailed</code>.</p>
+
+<pre><code>o.ADVISE = true;
+...trabajo normal...
+<span class="c">Warning: la CP "total" de cart no se sostiene con estos datos: calcularla cuesta
+5 us y SERVIRLA cacheada cuesta 108 us. [...] lo que sobra es la CP entera.</span></code></pre>
+
+<p><b>Se adapta al tamaño solo</b>, que era el objetivo: cuenta los recálculos y cada
+<code>ADVISE_N</code> vuelve a evaluar, así que la misma CP callará en la malla grande y avisará en la
+pequeña. Y una CP que alguna vez se gana el puesto de calle queda <i>cerrada</i> y no se vuelve a
+medir — medir cuesta un compute entero, y ésas son justo las caras.</p>
+
+<div class="note">
+<b>Dónde se mide importa, y costó descubrirlo.</b> Lo natural sería cronometrar el <code>compute</code>
+dentro del propio MISS: sale gratis, ya se está ejecutando. <b>No sirve.</b> Ahí se está dentro del
+<code>enter</code>/<code>onCleanup</code> de esa clave y las tomas salen contaminadas — medido, el
+compute de <code>cart.total</code> daba <b>818 µs</b> en esa posición y <b>5 µs</b> medido en
+condiciones, un factor 160; con esos números el consejero se tragaba casos que
+<code>ProfileCPs</code> caza con margen 7×. Por eso el diseño final es <b>contar dentro, opinar
+fuera</b>: el MISS solo apunta, y el veredicto se emite en la lectura siguiente, cuando no hay nada en
+vuelo. Y aun así se exige <b>margen ×2</b>: un veredicto que sale a cara o cruz es peor que no darlo.
+</div>
+
+<p class="small">Está <b>apagado por defecto</b> a propósito. Cronometrar cuesta, y sobre todo: un aviso
+que aparece o no según lo rápida que sea la máquina convierte en lotería cualquier salida comparada
+byte a byte — los <i>goldens</i> de este repo, sin ir más lejos. Enciéndelo cuando estés decidiendo,
+no de continuo.</p>
+
+<h2>10. Trampas</h2>
+
+<div class="note key">
+<b>La precondición tácita: el <code>compute</code> tiene que ser función PURA de los datos del
+objeto.</b> No está en ninguna guarda porque no se puede comprobar desde aquí, y sin embargo la asume
+todo el patrón — muy en particular <code>VerifyCPs</code>, que calcula «la verdad» <i>recalculando
+desde cero</i>. Si el valor depende además de la <b>historia</b> —de en qué <i>orden</i> pasaron las
+cosas, y no solo de en qué estado han quedado los datos—, entonces «la verdad» no está bien definida:
+el recálculo da una cosa, la caché otra, y la herramienta canta discrepancias que no lo son.
+<p>Le pasó a <code>ivp</code>, y es instructivo <i>cómo</i>. Su integrador partía cada tramo en
+<code>n</code> pasos iguales, así que la rejilla dependía de <b>desde dónde</b> arrancabas: pedir
+<code>y(1)</code> y luego <code>y(1/3)</code> daba <code>2,3197758575243266</code>, y pedirlos al revés
+<code>2,3197762151071655</code>. Los mismos datos, dos valores, según el orden de llegada. La cura fue
+anclar la rejilla al <b>origen</b> (pasos de tamaño exacto <code>DT</code>, con el tiempo de cada paso
+calculado como <code>k*DT</code> y no como <code>t0+k*h</code>) y ajustar a ella los tiempos pedidos.
+Así avanzar del punto <code>i</code> al <code>j</code> hace las mismas operaciones en el mismo orden
+vengas de donde vengas, y el valor vuelve a depender solo de los datos.</p>
+<p><b>La pregunta que hay que hacerse</b>, y vale para cualquier CP que acumule: <i>dos historias
+distintas que dejan los datos igual, ¿dan el mismo valor?</i> Si la respuesta es no, lo que tienes no
+es un derivado: es <b>estado que se te ha colado de contrabando</b> dentro de la caché. El grupo 26 de
+la batería lo guarda, con los tiempos que lo rompían.</p>
+</div>
+
+<ul>
+<li><b>El <code>{v}</code> de <code>setFresh</code> no es decorativo.</b>
+    <code>struct('value',C)</code> con <code>C</code> un cell crea un <b>struct array</b> en vez de
+    un escalar con el cell dentro. De ahí <code>struct('value',{v},'log',{{}})</code>: las llaves
+    fuerzan "guarda esto como valor único". Es el bug clásico de cachear cells.</li>
+<li><b><code>.set</code> no valida nada.</b> Es útil (sembrar un resultado calculado por fuera,
+    fijar un valor en un test) y es la única puerta por la que puede entrar una mentira a la caché.
+    Por eso clona: la mentira no se propaga a las hermanas.</li>
+<li><b><code>.delete</code> afecta a las hermanas</b> que compartan el handle. Es intencionado y
+    benigno — estado de rendimiento — pero si esperabas aislamiento, no lo hay.</li>
+<li><b>Redefinir descarta el valor.</b> Si no lo hiciera, servirías el resultado de la definición
+    vieja bajo la definición nueva, que es un bug silencioso y difícil de ver.</li>
+<li><b>Los edits incrementales no se colapsan; todo lo demás sí, y del todo.</b> Dos ediciones
+    incrementales idénticas consecutivas son <b>dos</b> aplicaciones del handler; fundirlas dejaría el
+    valor a medio actualizar. En cambio, en cuanto un log deja de ser todo-incremental, se funde
+    entero en <b>un marcador</b> con la unión de eventos: al sync absoluto solo le importa <i>qué</i>
+    disparó, no cuántas veces ni con qué. Sin ese colapso, mil edits sin lectura intermedia eran mil
+    entradas de log copiadas en cada evento — O(n²) —; con él, el log de una clave sin atajo vivo
+    mide 1 siempre.</li>
+<li><b>Una CP no puede llamarse como nada que ya exista.</b> El <code>subsref</code> consulta las
+    definiciones <b>antes</b> de caer al <code>builtin</code>, así que una CP llamada
+    <code>PRICE</code> taparía la propiedad, una llamada <code>CP</code> se comería el plano de
+    control y una acabada en <code>_</code> sería ambigua con el recálculo forzado.
+    <code>Define</code> rechaza los tres casos, cada uno con su identificador —
+    <code>cachedOwner:shadow</code> (pisa algo que existe), <code>:reservedSuffix</code> (acaba en
+    <code>_</code>) y <code>:name</code> (no es ni un identificador MATLAB válido) —;
+    <code>msh</code> se protege además por convención de caso (CPs en
+    minúscula, propiedades en MAYÚSCULA, métodos Capitalizados).</li>
+<li><b>Los arrays ya no son una limitación silenciosa: están prohibidos.</b> Antes
+    <code>A(2).total</code> moría en <code>noSuchMethodOrField</code> y <code>A.total</code> en
+    <code>maxrhs</code>; ahora el array no llega a nacer y todo sale con
+    <code>cachedOwner:notScalar</code>. Ver <i>"La clase es escalar, y se obliga"</i>. Lo que
+    <b>sigue</b> sin despacharse son las <b>cadenas de métodos</b>:
+    <code>C.Add(..).total</code> muere en <code>noSuchMethodOrField</code>, porque el
+    <code>builtin</code> sigue la cola de la cadena sin volver a pasar por el despachador. Es una
+    limitación deliberada de la base para no oscurecer el patrón; el
+    <code>subsref</code> de <code>msh</code> cubre ambos casos (reparto por elementos y reentrada tras
+    eslabones que devuelven <code>msh</code>) y es el sitio donde mirar cómo se hace — una subclase
+    que lo necesite sobreescribe <code>subsref</code>.</li>
+<li><b>Un handler que miente es peor que no tener handler.</b> Ojo a la diferencia: uno que
+    <b>revienta</b> sí se detecta solo — la cascada degrada, y desde entonces avisa, cuenta y lo marca
+    en la tabla (<code>cachedOwner:handlerFailed</code>) —; uno que <b>devuelve un valor equivocado
+    sin fallar</b> no lo verifica nadie en caliente. La
+    herramienta para comprobarlo es el recálculo forzado (<code>C.foo_</code>): si su resultado no
+    coincide con el del replay, el handler está mal. Merece la pena tener un test que, para cada
+    CP y cada evento, compare replay contra recompute.</li>
+<li><b>La forma más fácil de escribir un handler que miente era leer el objeto desde el
+    incremental.</b> El log guarda ediciones, no estados: en el replay ese argumento es el objeto
+    <i>de ahora</i>, no el de cada edición, así que el handler acierta con una edición pendiente y
+    falla con dos — en silencio. Por eso el incremental se escribe <code>@(v,~,args)</code> y
+    <code>Define</code> rechaza al anónimo que nombre ese argumento
+    (<code>cachedOwner:incrementalUsesOwner</code>); del handler opaco, o del que venga en un
+    <code>.mat</code> viejo, se encarga el replay renunciando al atajo. Ver la nota de la sección
+    4.</li>
+<li><b>Declarar de menos no falla: miente.</b> La CP sobrevive al evento que no declaró y sirve un
+    valor rancio en silencio. Del <b>olvido total</b> — una CP que <i>lee datos del objeto</i> y no
+    declara ni un evento — avisa <code>Define</code> (<code>cachedOwner:noEvents</code>, silenciable,
+    y marcado también en la tabla, que es donde no se pierde). Del <b>olvido parcial</b> no puede
+    avisar nadie: haría falta saber qué propiedad toca cada evento, y eso solo lo sabe quien escribe
+    los editores — ahí la herramienta sigue siendo comparar <code>o.&lt;n&gt;</code> con
+    <code>o.&lt;n&gt;_</code>. El aviso es una <b>heurística</b>: mira los <code>o.LOQUESEA</code> del
+    compute y se queda con los que son <b>propiedades</b> (leer otra CP o llamar a un método no
+    cuenta), y solo sabe mirar dentro de una anónima.</li>
+<li><b>Una CP que sale de otra no declara eventos, y ése era el agujero.</b> Ya no: la lectura queda
+    registrada como dependencia y la compuesta cae con la suya (ver "CPs compuestas" en la sección 6).
+    Lo que hay que recordar es dónde se escribe: <b>dentro</b> de la clase, <code>o.access('otra')</code>
+    — el punto no resuelve CPs ahí y el motor lo dice con
+    <code>cachedOwner:cpFromInside</code>—; <b>fuera</b>, <code>o.otra</code>.</li>
+<li><b>Una errata en <code>fire</code> era el único fallo invisible del patrón</b> — y por eso los
+    nombres se validan contra <code>CP_EVENTS</code>. Sin esa guarda, un
+    <code>fire({'bmup'})</code> no falla: simplemente ninguna CP reconoce el evento, las que solo
+    declaraban ése <b>sobreviven</b>, y se sirve un valor rancio en silencio (auditado:
+    <code>dbl=0</code> con <code>N=5</code>). Se paga un <code>ismember</code> por <b>edición</b> —
+    no por lectura — para cerrarlo.</li>
+<li><b>Un <code>varargin</code> que empieza demasiado pronto no declara nada.</b>
+    <code>@(varargin)</code> y <code>@(v,varargin)</code> tienen aridad −1 y −2, no llegan al umbral
+    del incremental y caían como absolutos <b>en silencio</b>: si el autor los quería incrementales, el
+    replay fallaba y degradaba a <code>compute</code> con el atajo de adorno. <code>Define</code> los
+    rechaza (<code>cachedOwner:ambiguousHandler</code>); la forma explícita de "incremental con args
+    variables" es <code>@(v,o,varargin)</code>.</li>
+<li><b>Si tocas la forma de <code>DEFS</code>, acuérdate de que viaja en el <code>.mat</code>.</b>
+    Los valores son transitorios pero las <i>definiciones</i> no, así que añadir un campo a una entrada
+    de <code>DEFS</code> deja los ficheros ya guardados sin él y el motor muere buscándolo. Ese es el
+    trabajo de la migración en <code>loadobj</code>: hoy rellena <code>inc</code>/<code>incH</code> en
+    lo que venga de un <code>.mat</code> anterior a que se precomputaran.</li>
+<li><b>Un solo handler incremental por CP.</b> El replay sigue <i>una</i> cadena, así que un segundo
+    quedaba muerto sin avisar (el log colapsaba a marcador y la lectura acababa recomputando, con el
+    handler ahí de adorno). <code>Define</code> lo rechaza ahora
+    (<code>cachedOwner:twoIncremental</code>). Si necesitas dos atajos, el segundo se escribe como
+    <code>@(v,o)</code> absoluto.</li>
+<li><b>El log incremental tiene techo</b> (<code>MAXLOG = 32</code>). Crece una entrada por edición y
+    cada evento lo copia entero al handle nuevo → O(n²) en una racha de ediciones sin lecturas
+    (auditado: 200 <code>AddPoint</code> = log de 200). Al llegar al techo se colapsa a marcador, que
+    siempre es correcto: se pierde el atajo incremental a cambio de memoria O(1) por clave.</li>
+<li><b>Indexar dentro de un valor usa <code>subsref</code>, no <code>builtin</code>.</b> Si el valor
+    cacheado es a su vez un objeto con <code>subsref</code> propio, el <code>builtin</code> se lo
+    salta: una CP que devolvía un <code>cart</code> moría en <code>noSuchMethodOrField</code> al
+    escribir <code>obj.miCP.total</code>. No hay riesgo de recursión porque la cadena siempre se
+    acorta.</li>
+</ul>
+
+<h2>11. Reusar el patrón en otra clase</h2>
+
+<p><b>Camino corto (el normal): heredar de <code>cachedOwner</code>.</b> Cuatro obligaciones, y
+ninguna es de fontanería:</p>
+
+<ol>
+<li><b><code>classdef miClase &lt; cachedOwner</code></b>.</li>
+<li><b>Una constante:</b> <code>CP_EVENTS</code>, la lista de eventos que tu clase dispara. Es el
+    vocabulario válido de <code>Define</code> (caza las erratas de evento). El resto del dominio va
+    implícito donde debe: la <b>firma</b> del handler dice si es incremental, y el <b>orden de
+    declaración</b> es la prioridad del replay.</li>
+<li><b><code>obj = obj.fire( {específico,…,general} , args )</code> en <i>cada</i> método que edite
+    datos</b> (setters incluidos). Este es el paso que se olvida: una ruta de edición sin disparo =
+    caché rancia. La base no puede saber cuándo cambia tu dominio.</li>
+<li><b><code>Define</code></b> para registrar cada derivado (heredado: solo lo llamas).</li>
+</ol>
+
+<p>Y una quinta <b>opcional</b>, que solo importa si tu clase va a evolucionar con <code>.mat</code>
+vivos: pon las llamadas a <code>Define</code> en un método propio y llámalo también desde
+<b><code>refreshDefs</code></b>, para que un objeto cargado use la lógica del <i>código</i> y no la del
+<i>fichero</i>. Cuesta tres líneas y evita la peor de las dos trampas de la serialización
+(§ <i>Serialización</i>).</p>
+
+<p>La clase mínima completa, para copiar y adaptar (es <code>route</code>, quitando comentarios —
+funcionó a la primera, y ese era el objetivo de todo el patrón):</p>
+
+<pre class="m"><code>classdef route &lt; cachedOwner
+  properties (SetAccess = private)
+    XY = zeros(0,2)                                  % los DATOS
+  end
+  properties (Constant, Hidden)
+    CP_EVENTS = { 'addpoint' , 'changegeom' }        % obligacion 2: el vocabulario
+  end
+  methods
+    function obj = AddPoint( obj , x , y )           % un editor
+      d = 0;
+      if ~isempty( obj.XY ), d = norm( [x y] - obj.XY(end,:) ); end
+      obj.XY( end+1 , : ) = [ x y ];
+      obj = obj.fire( { 'addpoint' , 'changegeom' } , d );   % obligacion 3: fire SIEMPRE
+    end
+    function obj = Scale( obj , k )                  % otro editor (edit absoluto: sin args)
+      obj.XY = obj.XY * k;
+      obj = obj.fire( { 'changegeom' } );
+    end
+    function obj = Demo( obj )                       % obligacion 4: las definiciones
+      obj = obj.Define( 'len'  , @(r) sum( vecnorm( diff( r.XY ) ,2,2) ) , ...
+                        'addpoint'   , @(v,~,d) v + d , ...              % incremental
+                        'changegeom' , @(v,r) sum( vecnorm( diff( r.XY ) ,2,2) ) );
+      obj = obj.Define( 'npts' , @(r) size( r.XY , 1 ) , ...
+                        'addpoint' , @(v,~,d) v + 1 );
+      % npts NO declara changegeom: escalar la ruta no cambia cuantos puntos hay
+    end
+  end
+end</code></pre>
+
+<p><b>¿Y si necesito mi propio <code>subsref</code>?</b> — el caso de <code>msh</code>, que además
+despacha arrays, alias legados y reentrada en cadenas. Se hereda igual y se <b>sobreescribe</b>
+<code>subsref</code>: dentro del método propio se llama a <code>obj.access(nm)</code>,
+<code>obj.cachedAccess(s)</code> y <code>obj.recompute(nm)</code> — son <code>protected</code>
+justamente para esto — y se delega el resto con
+<code>subsref@cachedOwner(obj,s)</code>. El <code>builtin('subsref')</code> del fallback sigue siendo
+privilegiado porque tu método es de la clase; ésa es la única regla dura.</p>
+
+<div class="note">
+<b>Esta puerta estuvo cerrada y no se notaba.</b> <code>access</code> y <code>recompute</code> nacieron
+<code>private</code>, así que el camino de extensión que este tutorial recomendaba <i>no existía</i>:
+una subclase que lo intentaba moría en <code>noSuchMethodOrField</code>, y la cabecera de
+<code>cachedOwner</code> llegó a citar tres métodos (<code>cpRead</code>, <code>cpControl</code>,
+<code>cpRecompute</code>) que nunca existieron. Lo descubrió la revisión final escribiendo la
+subclase que el documento prometía — moraleja aplicable a cualquier API: <b>un camino de extensión
+sin un test que lo recorra es una hipótesis</b>.
+</div>
+
+<p class="small">Lo que <b>nunca</b> hay que escribir: HIT/MISS, la guarda de ciclos, el replay y su
+cascada, el copy-on-write, el colapso del log, el despacho de
+<code>.delete</code>/<code>.set</code>/<code>.removeCP</code>/handlers, la validación de nombres y
+eventos de <code>Define</code>, la serialización y la tabla del <code>disp</code>. Todo eso es
+<code>cachedOwner</code>, y es el mismo fichero para todas las clases.</p>
+
+<h2>12. Puente de vuelta a <code>msh</code></h2>
+
+<p><b>Ojo con una cosa:</b> <code>msh</code> <i>todavía no usa</i> <code>cachedOwner</code>. Sigue
+con su motor escrito dentro de la clase, que es de donde salió este ejemplo. La correspondencia es
+1:1, así que la tabla vale igual para leerlo — y como guía si algún día se migra (para
+<code>msh</code> el camino sería heredar y <b>sobreescribir</b> <code>subsref</code>, porque el suyo
+hace más cosas: arrays, alias legados, reentrada en cadenas):</p>
+
+<div class="tw">
+<table>
+<tr><th>En <code>cachedOwner</code></th><th>En <code>@msh\msh.m</code></th><th>Nota</th></tr>
+<tr><td><code>CP_EVENTS</code> + firmas + orden de declaración</td><td>hardcodeados en <code>replayEntry</code> y <code>eventNames</code></td><td>el vocabulario: en msh está escrito dentro del motor, y por eso el suyo no es reutilizable</td></tr>
+<tr><td><code>DEFS</code></td><td><code>cachePROPS</code></td><td>igual: nombre → compute + events</td></tr>
+<tr><td><code>Define</code></td><td><code>DefineCP</code></td><td>msh añade convención por caso: las CPs empiezan en minúscula, y reserva nombres</td></tr>
+<tr><td><code>access</code></td><td><code>accessCached</code></td><td>casi idéntico; msh aún lee la definición ANTES del <code>tryGet</code> (la mejora del HIT está propuesta)</td></tr>
+<tr><td><code>replay</code></td><td><code>replayEntry</code></td><td>msh: el incremental es <code>transform</code> <code>@(v,m,T)</code>, y el orden de la cascada absoluta es <code>changeNodeCount → changeDim → changeCoords → changeFaceCount → changeConnectivity</code></td></tr>
+<tr><td><code>fire</code></td><td><code>fireEvents</code></td><td>en msh lo disparan <code>set.V</code>, <code>set.F</code> y <code>Transform</code>; msh no colapsa el log (mejora propuesta)</td></tr>
+<tr><td><code>Add</code> / <code>SetPrice</code> (en <code>cart</code>)</td><td>editar <code>V</code> / <code>F</code>, <code>Transform(T)</code></td><td><code>Transform</code> es el que lleva args, como <code>Add</code></td></tr>
+<tr><td><code>lst</code>, <code>fmt</code></td><td><code>msh.lst</code>, <code>msh.fmtVal</code></td><td>solo formateo para las trazas y la tabla</td></tr>
+</table>
+</div>
+
+<p>Y una pieza que <code>cart</code> no necesita pero <code>msh</code> sí:
+<code>withGeometry</code>, que al reconstruir la malla desde un struct legado <b>conserva el
+registro de definiciones</b>. Perder un valor cacheado es rendimiento; perder una definición es
+pérdida de datos — la registró el usuario y no hay forma de recuperarla.</p>
+
+<p>Hay una correspondencia más, y ésta es <b>trabajo pendiente</b>, no equivalencia:
+<code>msh.defaultRegistry()</code> — el método estático donde viven las 9 CPs de fábrica — es
+exactamente la mitad buena del esquema que pide <code>refreshDefs</code>: las definiciones ya están
+<i>en un método</i> en vez de esparcidas por el constructor. Lo que falta es la otra mitad: hoy
+<code>msh.loadobj</code> solo revive el handle de la caché y <b>no vuelve a llamar al registro</b>, así
+que una malla guardada arrastra para siempre los compute con los que se guardó. Al migrar,
+<code>refreshDefs</code> es el sitio donde eso se cierra.</p>
+
+<h2>13. El patrón en el mapa de otros lenguajes</h2>
+
+<p>Este patrón es la combinación <b>a mano</b> de tres capacidades que otros ecosistemas tienen
+nativas — pero casi siempre <i>por separado</i>. Ningún lenguaje mainstream trae las tres juntas:</p>
+
+<div class="tw">
+<table>
+<tr><th>Sistema</th><th>Memoiza al leer</th><th>Invalidación</th><th>Actualización incremental</th><th>Caché compartida entre copias de valor</th></tr>
+<tr><td><b>Python</b> <code>functools.cached_property</code></td>
+    <td>✓ nativo</td><td>manual (<code>del obj.x</code>)</td><td>✗</td><td>n/a (semántica de referencia)</td></tr>
+<tr><td><b>Kotlin</b> <code>by lazy</code> · <b>Swift</b> <code>lazy var</code> · <b>C#</b> <code>Lazy&lt;T&gt;</code></td>
+    <td>✓ nativo</td><td>✗ (una vez y para siempre)</td><td>✗</td><td>✗</td></tr>
+<tr><td><b>Vue/MobX/Solid</b> <i>computed</i>, señales TC39</td>
+    <td>✓</td><td>✓ <b>automática</b></td><td>✗ (invalida y recomputa)</td><td>✗</td></tr>
+<tr><td><b>salsa</b> (Rust) · <b>Incremental</b> (OCaml)</td>
+    <td>✓</td><td>✓ automática por grafo</td><td>parcial (memoiza subcómputos)</td><td>✗</td></tr>
+<tr><td><b>Vistas materializadas</b> (Oracle MV logs, Materialize)</td>
+    <td>✓ (refresh on demand)</td><td>✓ por <b>logs de cambios</b></td><td>✓✓ deltas de verdad</td><td>n/a</td></tr>
+<tr><td><b>Haskell</b> (thunks)</td>
+    <td>✓✓ es el lenguaje</td><td>innecesaria (inmutable)</td><td>✗</td><td>compartición estructural nativa</td></tr>
+<tr><td><b>Excel</b></td>
+    <td>✓</td><td>✓ grafo automático</td><td>recálculo mínimo</td><td>✗</td></tr>
+<tr><td><b>MATLAB nativo</b> (<code>Dependent</code>)</td>
+    <td>✗ recomputa siempre</td><td>—</td><td>—</td><td>—</td></tr>
+</table>
+</div>
+
+<h3>Las señales reactivas: el pariente famoso, con una diferencia estructural</h3>
+
+<p>Los <i>computed</i> de Vue/MobX/Solid (y la propuesta de Signals de TC39) no necesitan un
+<code>CP_EVENTS</code>: interceptan las <b>lecturas</b> del compute y descubren las dependencias
+solos — <i>"¿leíste <code>PRICE</code>? pues te invalido cuando cambie <code>PRICE</code>"</i>. Ese
+es exactamente el lujo que MATLAB no da (no hay forma barata de interceptar lecturas de
+propiedades), y por eso este patrón declara los eventos a mano. A cambio, las señales solo saben
+<b>invalidar</b>: cuando algo cambia, el computed se recalcula entero. No tienen el escalón
+intermedio del replay.</p>
+
+<h3>Los materialized view logs: el paralelo exacto de <code>pending</code> + log + replay</h3>
+
+<p>Es casi este diseño con otros nombres: la vista materializada es el valor cacheado; el <i>MV
+log</i> de Oracle anota los cambios desde el último refresh (el log de edits con args); el
+<i>fast refresh</i> aplica solo los deltas (el replay incremental); y si el log no sirve, cae a
+<i>complete refresh</i> (la cascada a recompute). Hasta la decisión de fondo es la misma: anotar en
+cada escritura cuesta algo, a cambio de no recalcular al leer. Lo que aquí es
+<code>@(v,~,d) v+d</code>, en ese mundo se llama <b>incremental view maintenance</b> — y hay
+sistemas enteros construidos sobre la idea (Materialize, differential dataflow).</p>
+
+<h3>Haskell: la mitad del patrón que desaparece</h3>
+
+<p>El <i>call-by-need</i> es literalmente el MISS: un thunk se evalúa la primera vez que alguien lo
+lee y queda memoizado para siempre. ¿Y la otra mitad — eventos, invalidación, replay? <b>No existe,
+porque no hay mutación.</b> Es la observación más clarificadora de la tabla: el vocabulario de
+eventos, el COW y los tres estados son el precio de que los datos puedan editarse. La pereza es
+gratis; lo caro es la coherencia bajo mutación.</p>
+
+<div class="note">
+<b>Dos notas sueltas.</b> El truco del <code>cacheHandle</code> — objeto de valor cuyas copias
+comparten un búfer por referencia hasta divergir — es el mismo idioma copy-on-write de los structs
+de Swift (y de los propios arrays de MATLAB), aplicado a la caché en vez de a los datos. Y lo
+genuinamente poco común del patrón es la <b>política ternaria por evento</b> (sobrevive / pende /
+cae): casi todos los sistemas son binarios — válido o inválido. El estado <code>pending</code> con
+log reproducible es un rasgo de bases de datos, no de lenguajes; que conviva con señales estilo
+frontend y COW estilo Swift en ~600 líneas de MATLAB es lo que hace al diseño interesante.
+</div>
+
+<hr>
+<p class="small">Ficheros: <code>cacheHandle.m</code>, <code>cacheProxy.m</code> (raíz) ·
+<code>cachedOwner.m</code> (raíz: la clase base, ganchos + política) ·
+<code>dev\tests\test_cache.m</code> (la batería de verificación) ·
+<code>dev\cart.m</code>, <code>dev\cartDemo.m</code> (este tutorial) · <code>@msh\msh.m</code> (el
+motor todavía embebido, secciones <i>CACHEDPROPS</i>).</p>
+
+</div>
+<script>
+document.querySelectorAll('pre.m code, pre code').forEach(function(p){
+  var esc = function(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  p.innerHTML = p.textContent.split('\n').map(function(L){
+    var q = false, cut = -1;
+    for (var i = 0; i < L.length; i++){
+      var ch = L[i];
+      if (ch === "'") q = !q;
+      else if (ch === '%' && !q){ cut = i; break; }
+    }
+    if (cut < 0) return esc(L);
+    return esc(L.slice(0,cut)) + '<span class="c">' + esc(L.slice(cut)) + '</span>';
+  }).join('\n');
+});
+</script>
+</body>
+</html>
