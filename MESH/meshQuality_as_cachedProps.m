@@ -24,7 +24,7 @@ function M = meshQuality_as_cachedProps( M , varargin )
 %       q = M.aspectratio;              % lee (perezoso; == M.CP.aspectratio)
 %       q = M.aspectratio_;             % RECALCULA a la fuerza
 %       M.CP                            % tabla (estado + eventos)
-%       M = M.CP.area.removeProp;       % desregistrar una
+%       M = M.CP.area.removeCP;         % desregistrar una
 %
 %   Invalidacion: cualquier edicion de coordenadas fuera de Transform() y
 %   cualquier edicion de conectividad tiran el valor (se recomputa al pedirlo).

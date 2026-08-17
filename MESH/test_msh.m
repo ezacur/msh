@@ -7,7 +7,7 @@
 function test_msh
   rng(31);
   root = fileparts( fileparts( mfilename('fullpath') ) );
-  addpath( root );                              %@msh + cacheHandle + cacheView
+  addpath( root );                              %@msh + cacheHandle + cacheProxy
   addpath( fullfile( root , 'tools' ) );        %transform
   addpath( fullfile( root , 'BVH' ) );          %motor BVH/bvhClosestElement/...
 
@@ -230,7 +230,7 @@ function test_msh
   assert( contains( out , 'MISS' ) && v11 == 350.5 , 'CP: invalida con changeNodeCount' );
   Mq.DEBUG = false;
 
-  %proxy: delete (statement, borra solo el valor) / set (conservador) / removeProp
+  %proxy: delete (statement, borra solo el valor) / set (conservador) / removeCP
   Mq.CP.halfN.delete;
   Mq.DEBUG = true;
   out = evalc( 'v11 = Mq.halfN;' );
@@ -239,14 +239,21 @@ function test_msh
   Mq2 = Mq.CP.halfN.set( 999 );
   assert( Mq2.halfN == 999 , 'proxy: set siembra' );
   assert( Mq.halfN == 350.5 , 'proxy: set es aislado (COW)' );
-  Mq3 = Mq.CP.halfN.removeProp;
+  Mq3 = Mq.CP.halfN.removeCP;
   try
     Mq3.CP.halfN;
-    error('test:proxy','removeProp debia dejarla indefinida');
+    error('test:proxy','removeCP debia dejarla indefinida');
   catch ME
-    assert( strcmp( ME.identifier , 'msh:cached' ) , 'proxy: removeProp' );
+    assert( strcmp( ME.identifier , 'msh:cached' ) , 'proxy: removeCP' );
   end
-  assert( Mq.halfN == 350.5 , 'proxy: removeProp no toca al original' );
+  assert( Mq.halfN == 350.5 , 'proxy: removeCP no toca al original' );
+  %el nombre viejo ya NO es una operacion: se reenvia como indexacion del valor
+  try
+    Mq.CP.halfN.removeProp;
+    error('test:proxy','removeProp ya no debe existir como operacion');
+  catch ME
+    assert( ~strcmp( ME.identifier , 'test:proxy' ) , 'proxy: removeProp retirado' );
+  end
 
   %handler de evento: obtener e invocar; indexar dentro del valor
   h11 = Mq.CP.bvh.changeCoords;

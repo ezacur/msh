@@ -37,7 +37,7 @@ classdef msh < matlab.mixin.CustomDisplay
 %     M.CP                      tabla de definiciones y estados (plano de control)
 %     M.CP.bvh                  el valor (lectura perezosa, como M.bvh)
 %     M.CP.bvh.delete           borra el valor (la definicion queda)
-%     M = M.CP.bvh.removeProp   borra definicion y valor
+%     M = M.CP.bvh.removeCP     borra definicion y valor (== M.RemoveCP)
 %     M = M.CP.bvh.set( x )     siembra un valor a mano (aislado, COW)
 %     M.CP.bvh.changeCoords     el handler del evento (invocable)
 %
@@ -88,7 +88,7 @@ classdef msh < matlab.mixin.CustomDisplay
 %   via los alias xyz/tri pero DEVUELVE STRUCT, no msh) -- usa M.Plot() y
 %   M.Transform(T).
 %
-% See also cacheHandle, cacheView, BVH, bvhClosestElement, bvhIntersectRay,
+% See also cacheHandle, cacheProxy, BVH, bvhClosestElement, bvhIntersectRay,
 %          msh_CLASS_TUTORIAL.md.
 
   %% ------------------------------------------------------------------ DATOS
@@ -207,7 +207,7 @@ classdef msh < matlab.mixin.CustomDisplay
       if strcmp( s(1).type , '.' ) && ( ischar( s(1).subs ) || isstring( s(1).subs ) )
         nm = char( s(1).subs );
         if strcmp( nm , 'CP' )                 %plano de control (proxy)
-          if isscalar( s ), varargout{1} = cacheView( M ); return; end
+          if isscalar( s ), varargout{1} = cacheProxy( M ); return; end
           out = M.cachedAccess( s(2:end) );
           if isempty( out ), varargout = {};
           else, varargout = out( 1:max( min( nargout , numel(out) ) , 1 ) );
@@ -441,8 +441,10 @@ classdef msh < matlab.mixin.CustomDisplay
 
   methods (Hidden)
     function out = cachedAccess( M , s )
-      %despachador de M.CP.<nombre>[...] (la vista cacheView). Devuelve un
-      %cell de outputs (vacio para .delete).
+      %despachador de M.CP.<nombre>[...] (el proxy cacheProxy). Devuelve un cell
+      %de outputs (vacio para .delete). SOLO despacha: el cuerpo de cada
+      %operacion vive en su propio metodo privado (cpDelete/cpRemove/cpSeed/
+      %cpHandler), asi que anadir una no engorda este switch.
       if ~strcmp( s(1).type , '.' )
         error('msh:cached','use M.CP.<nombre> (o lee directo con M.<nombre>).');
       end
@@ -450,7 +452,6 @@ classdef msh < matlab.mixin.CustomDisplay
       if ~isfield( M.cachePROPS , name )
         error('msh:cached','no hay CP ''%s'' definida (ver DefineCP).', name );
       end
-      r = M.cachePROPS.( name );
       if isscalar( s )                             % M.CP.bvh -> el valor
         out = { M.accessCached( name ) };
         return;
@@ -458,53 +459,17 @@ classdef msh < matlab.mixin.CustomDisplay
       if strcmp( s(2).type , '.' )
         opn = char( s(2).subs );
         switch opn
-          case 'delete'          %borra el VALOR (handle compartido); statement
-            if numel( s ) > 2, error('msh:cached','.delete no admite mas indexacion.'); end
-            c = M.liveCache();
-            if ~isempty( c ), c.remove( name ); end
-            M.dbg( 'CACHE ''%s'' valor borrado (definicion intacta)' , name );
-            out = {};
-            return;
-          case 'removeProp'      %borra definicion + valor; devuelve el msh nuevo
-            if numel( s ) > 2, error('msh:cached','.removeProp no admite mas indexacion.'); end
-            out = { M.RemoveCP( name ) };
-            return;
-          case 'set'             %siembra un valor a mano (conservador: COW, aislado)
-            if numel( s ) ~= 3 || ~strcmp( s(3).type , '()' ) || numel( s(3).subs ) ~= 1
-              error('msh:cached','uso: M = M.CP.%s.set( valor ).', name );
-            end
-            M2 = M;
-            c  = M2.liveCache();
-            if isempty( c ), M2.CACHE = cacheHandle();
-            else,            M2.CACHE = c.clone();
-            end
-            M2.CACHE.setFresh( name , s(3).subs{1} );
-            M2.dbg( 'CACHE ''%s'' valor sembrado a mano (set)' , name );
-            out = { M2 };
-            return;
+          case 'delete'  , out = M.cpDelete( name , s );  return;
+          case 'removeCP', out = M.cpRemove( name , s );  return;
+          case 'set'     , out = M.cpSeed(   name , s );  return;
           otherwise
-            if ismember( opn , msh.eventNames() )   %handler de un evento
-              if ~isfield( r.events , opn )
-                error('msh:cached','''%s'' no declara el evento %s.', name , opn );
-              end
-              h = r.events.( opn );
-              if numel( s ) >= 3 && strcmp( s(3).type , '()' )      %invocacion
-                if isempty( h )
-                  error('msh:cached','el evento %s de ''%s'' es [] (invalidar): no es invocable.', opn , name );
-                end
-                v = h( s(3).subs{:} );
-                if numel( s ) > 3, v = builtin( 'subsref' , v , s(4:end) ); end
-                out = { v };
-              else
-                out = { h };
-              end
-              return;
+            if ismember( opn , msh.eventNames() )
+              out = M.cpHandler( name , opn , s );  return;
             end
         end
       end
-      %cualquier otra cosa: indexar DENTRO del valor
-      v = M.accessCached( name );
-      out = { builtin( 'subsref' , v , s(2:end) ) };
+      %cualquier otro nombre: indexar DENTRO del valor
+      out = { builtin( 'subsref' , M.accessCached( name ) , s(2:end) ) };
     end
 
     function displayCachedView( M )
@@ -540,6 +505,66 @@ classdef msh < matlab.mixin.CustomDisplay
   end
 
   methods (Access = private)
+    %------------------------------------ operaciones del proxy M.CP.<nombre>
+    % Una por metodo, cada una con su propia validacion. cachedAccess solo
+    % elige; el `s` completo llega aqui porque cada operacion decide que
+    % indexacion extra admite (ninguna, o un '()' de argumentos).
+    function out = cpDelete( M , name , s )
+      %.delete  borra el VALOR. Muta el handle COMPARTIDO (las hermanas
+      %tambien lo pierden: benigno, como mucho alguien recomputa) y es un
+      %STATEMENT, no devuelve nada.
+      if numel( s ) > 2, error('msh:cached','.delete no admite mas indexacion.'); end
+      c = M.liveCache();
+      if ~isempty( c ), c.remove( name ); end
+      M.dbg( 'CACHE ''%s'' valor borrado (definicion intacta)' , name );
+      out = {};
+    end
+
+    function out = cpRemove( M , name , s )
+      %.removeCP  borra definicion Y valor; devuelve el msh nuevo. Es la forma
+      %proxy de M.RemoveCP( name ), y delega en ella para no tener dos codigos.
+      if numel( s ) > 2, error('msh:cached','.removeCP no admite mas indexacion.'); end
+      out = { M.RemoveCP( name ) };
+    end
+
+    function out = cpSeed( M , name , s )
+      %.set( valor )  siembra un valor a mano. CONSERVADOR: clona el handle
+      %(COW) para que las hermanas no vean el valor sembrado. Nadie verifica
+      %que el valor sea correcto -- de ahi que sea el gesto peligroso del proxy.
+      if numel( s ) ~= 3 || ~strcmp( s(3).type , '()' ) || numel( s(3).subs ) ~= 1
+        error('msh:cached','uso: M = M.CP.%s.set( valor ).', name );
+      end
+      M2 = M;
+      c  = M2.liveCache();
+      if isempty( c ), M2.CACHE = cacheHandle();
+      else,            M2.CACHE = c.clone();
+      end
+      M2.CACHE.setFresh( name , s(3).subs{1} );
+      M2.dbg( 'CACHE ''%s'' valor sembrado a mano (set)' , name );
+      out = { M2 };
+    end
+
+    function out = cpHandler( M , name , opn , s )
+      %.<evento>  el handler declarado para ese evento: se DEVUELVE tal cual,
+      %o se INVOCA si la cadena trae un '()' con argumentos.
+      %El registro se lee AQUI y no en cachedAccess: es el unico camino que lo
+      %necesita, y el acceso corriente (M.CP.<nombre>) no debe pagarlo.
+      ev = M.cachePROPS.( name ).events;
+      if ~isfield( ev , opn )
+        error('msh:cached','''%s'' no declara el evento %s.', name , opn );
+      end
+      h = ev.( opn );
+      if ~( numel( s ) >= 3 && strcmp( s(3).type , '()' ) )
+        out = { h };  return;                      %sin '()': el handler
+      end
+      if isempty( h )
+        error('msh:cached','el evento %s de ''%s'' es [] (invalidar): no es invocable.', opn , name );
+      end
+      v = h( s(3).subs{:} );
+      if numel( s ) > 3, v = builtin( 'subsref' , v , s(4:end) ); end
+      out = { v };
+    end
+
     function M2 = withGeometry( M , S )
       %reconstruye desde un struct legado CONSERVANDO lo que NO viaja por el
       %puente ToStruct: VIZ, INFO, DEBUG y el REGISTRO de CPs. Perder un VALOR

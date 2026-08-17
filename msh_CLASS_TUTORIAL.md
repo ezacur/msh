@@ -22,7 +22,7 @@ recálculo: `M.bvh_`.*
 ## 0. Instalación y verificación
 
 ```matlab
-addpath C:\repos\msh          % @msh + cacheHandle + cacheView
+addpath C:\repos\msh          % @msh + cacheHandle + cacheProxy
 addpath C:\repos\msh\BVH      % motor de queries: BVH / bvhClosestElement / ...
 addpath C:\repos\msh\MESH     % toolbox legado
 addpath C:\repos\msh\tools    % transform (usado por M.Transform)
@@ -374,7 +374,7 @@ pequeña de siempre (capturan su workspace).
 | `M.CP.bvh` | el valor (computa/replay si hace falta, como `M.bvh`) | valor |
 | `M.CP.bvh.frame` | indexa **dentro** del valor | `blob.frame` |
 | `M.CP.bvh.delete` | borra el **valor** (la definición queda) | — |
-| `M = M.CP.bvh.removeProp` | borra definición **y** valor | msh nuevo |
+| `M = M.CP.bvh.removeCP` | borra definición **y** valor (== `M.RemoveCP('bvh')`) | msh nuevo |
 | `M = M.CP.bvh.set( x )` | siembra un valor a mano ("dangerous, but...") | msh nuevo |
 | `M.CP.bvh.changeCoords` | el handler del evento (`[]` = invalida) | handle |
 | `M.CP.bvh.changeCoords( B , M )` | lo ejecuta con tus argumentos | valor |
@@ -394,10 +394,10 @@ las puertas de uso diario; `M.CP` es la sala de máquinas.
   cache sembrada; las hermanas ni se enteran. Sigue siendo peligroso en el
   sentido que importa — nadie verifica que `x` sea correcto. (Y ojo: un
   `M.<nombre>_` posterior pisa el valor sembrado con el recomputado.)
-* `.removeProp` y `DefineCP` tocan la *definición* (que vive en el
+* `.removeCP` y `DefineCP` tocan la *definición* (que vive en el
   valor): devuelven un msh nuevo, hermanas intactas.
 
-Colisiones: tras el nombre, `delete`/`removeProp`/`set` y los nombres de
+Colisiones: tras el nombre, `delete`/`removeCP`/`set` y los nombres de
 evento son operaciones reservadas del proxy; cualquier otro nombre se reenvía
 como indexación del valor. Si un valor tuviera un campo llamado como una
 operación, sácalo en dos pasos (`B = M.bvh; B.delete` ya indexa normal).
@@ -612,6 +612,23 @@ Las **definiciones** (el registro, con sus handlers) viajan en el `.mat`; los
 **valores** cacheados no (el handle es Transient): un `.mat` de `msh` pesa lo
 que pesan sus datos y todo se recalcula al primer uso. Para transportar un BVH
 precalculado, guárdalo aparte (`B = M.bvh` es un struct-valor serializable).
+
+> **Ojo, y es la cara B de que las definiciones viajen: la lógica guardada gana
+> a la nueva.** Una malla cargada usa los `compute` y handlers **del fichero**,
+> no los del código actual — así que mejorar el `compute` de una CP de fábrica
+> (el del `bvh`, por ejemplo) **no afecta a los `.mat` ya guardados**, que
+> seguirán construyéndolo como se construía entonces. Hoy `msh.loadobj` solo
+> revive el handle de la caché y no vuelve a llamar a `msh.defaultRegistry()`.
+> Mientras eso siga así, la vuelta manual es re-registrar tras cargar:
+>
+> ```matlab
+> L = load('malla.mat');  M = L.M;
+> M = M.DefineCP( 'bvh' , @(m) BVH( ToStruct(m) ) , ... );   % refrescar a mano
+> ```
+>
+> En el patrón genérico (`cachedOwner`) esto ya está resuelto con el gancho
+> `refreshDefs`, que `loadobj` llama al cargar; cuando `msh` migre, será una
+> línea. Ver la sección *Serialización* de `cache_TUTORIAL.html`.
 
 ---
 
